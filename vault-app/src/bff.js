@@ -17,24 +17,24 @@ import { log } from "./logger.js";
 export function makeBff(vault) {
   return {
     // POST /vault/intake {dad_id, text} -> {written, chase} — Intake writes claim
-    postVaultIntake({ dad_id, text }, opts = {}) {
+    async postVaultIntake({ dad_id, text }, opts = {}) {
       return extract(vault, dad_id, text, opts);
     },
 
     // GET /vault/state {dad_id} -> state row — Edge / Front Door read
-    getVaultState({ dad_id }) {
+    async getVaultState({ dad_id }) {
       return vault.getState(dad_id);
     },
 
     // PUT /vault/state {dad_id, phase?, this_week?, missing?, next_action?}
-    putVaultState({ dad_id, ...patch }) {
+    async putVaultState({ dad_id, ...patch }) {
       return vault.upsertState(dad_id, patch);
     },
 
     // POST /vault/comms/cold {dad_id, body_cold, channel} -> {id}
     // Only the cold, court-safe outgoing sentence is stored — never the vent.
-    postCommsCold({ dad_id, body_cold, channel }) {
-      const rec = vault.insertCommunication(dad_id, {
+    async postCommsCold({ dad_id, body_cold, channel }) {
+      const rec = await vault.insertCommunication(dad_id, {
         direction: "outgoing",
         channel,
         body_cold,
@@ -46,8 +46,8 @@ export function makeBff(vault) {
 
     // POST /vault/comms/pull {dad_id, channel, source_ref, ...} -> {id}
     // Verified pulled record — source_ref required by the vault.
-    postCommsPull({ dad_id, channel, source_ref, body_cold, sent_at }) {
-      const rec = vault.insertCommunication(dad_id, {
+    async postCommsPull({ dad_id, channel, source_ref, body_cold, sent_at }) {
+      const rec = await vault.insertCommunication(dad_id, {
         direction: "pull",
         channel,
         source_ref,
@@ -59,8 +59,8 @@ export function makeBff(vault) {
     },
 
     // GET /vault/export/verified {dad_id} -> rows — Reporting ONLY.
-    getVaultExportVerified({ dad_id }) {
-      const rows = vault.verifiedExport(dad_id);
+    async getVaultExportVerified({ dad_id }) {
+      const rows = await vault.verifiedExport(dad_id);
       log("export.verified", { dad: dad_id, rows: rows.length });
       return rows;
     },

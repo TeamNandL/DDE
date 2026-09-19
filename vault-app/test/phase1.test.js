@@ -1,6 +1,6 @@
 // Phase 1 §6 tests 1–8, run against the local in-memory vault proof.
-// Test 9 (Monday→Friday on rented Postgres) is intentionally absent: no
-// Supabase instance exists until Nick's exact-yes.
+// Test 9 (Monday→Friday on rented Postgres) lives in phase1.pg.test.js /
+// milestone9-driver.js.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -33,9 +33,9 @@ function freshSession() {
   return { vault, bff: makeBff(vault) };
 }
 
-function ventSession() {
+async function ventSession() {
   const s = freshSession();
-  s.intakeResult = s.bff.postVaultIntake(
+  s.intakeResult = await s.bff.postVaultIntake(
     { dad_id: DAD_ID, text: FIXED_VENT },
     { referenceDate: MONDAY },
   );
@@ -46,8 +46,8 @@ function dump(vault) {
   return JSON.stringify(vault.allRows());
 }
 
-test("Test 1: Intake claim write — fixed vent → ≥1 events row, pipe='claim', event_type='late_exchange', raw_quote present", () => {
-  const { vault, intakeResult } = ventSession();
+test("Test 1: Intake claim write — fixed vent → ≥1 events row, pipe='claim', event_type='late_exchange', raw_quote present", async () => {
+  const { vault, intakeResult } = await ventSession();
   assert.ok(intakeResult.written >= 1, "at least one row written");
   assert.ok(vault.events.length >= 1, "events table has a row");
   const ev = vault.events[0];
@@ -57,8 +57,8 @@ test("Test 1: Intake claim write — fixed vent → ≥1 events row, pipe='claim
   assert.equal(ev.dad_id, DAD_ID);
 });
 
-test("Test 2: Claim chase, not count — 'third time this month' → no number stored; state.missing has a verify item", () => {
-  const { vault } = ventSession();
+test("Test 2: Claim chase, not count — 'third time this month' → no number stored; state.missing has a verify item", async () => {
+  const { vault } = await ventSession();
   // §4: raw_quote = original minus harm/venom — the dad's own words stay on
   // the claim pipe, count claim included.
   const ev = vault.events[0];
@@ -85,8 +85,8 @@ test("Test 2: Claim chase, not count — 'third time this month' → no number s
   assert.ok(!/\d/.test(item), "the verify item itself carries no number");
 });
 
-test("Test 3: Venom stripped — no row anywhere contains 'destroying', 'spiteful', or characterization of Jordan", () => {
-  const { vault } = ventSession();
+test("Test 3: Venom stripped — no row anywhere contains 'destroying', 'spiteful', or characterization of Jordan", async () => {
+  const { vault } = await ventSession();
   const stored = dump(vault);
   assert.ok(!/destroying/i.test(stored));
   assert.ok(!/spiteful/i.test(stored));
@@ -94,26 +94,26 @@ test("Test 3: Venom stripped — no row anywhere contains 'destroying', 'spitefu
   assert.ok(!/doing this to/i.test(stored));
 });
 
-test("Test 4: Edge read — GET /vault/state returns next_action and missing with no re-entry", () => {
-  const { bff } = ventSession();
+test("Test 4: Edge read — GET /vault/state returns next_action and missing with no re-entry", async () => {
+  const { bff } = await ventSession();
   // No further writes between intake and this read — Edge just reads.
-  const state = bff.getVaultState({ dad_id: DAD_ID });
+  const state = await bff.getVaultState({ dad_id: DAD_ID });
   assert.ok(state, "state readable");
   assert.ok(typeof state.next_action === "string" && state.next_action.length > 0, "next_action present");
   assert.ok(Array.isArray(state.missing) && state.missing.length > 0, "missing present");
 });
 
-test("Test 5: Verified export clean — GET /vault/export/verified returns zero rows from the vent session", () => {
-  const { bff } = ventSession();
-  const rows = bff.getVaultExportVerified({ dad_id: DAD_ID });
+test("Test 5: Verified export clean — GET /vault/export/verified returns zero rows from the vent session", async () => {
+  const { bff } = await ventSession();
+  const rows = await bff.getVaultExportVerified({ dad_id: DAD_ID });
   assert.equal(rows.length, 0, "verified export is empty — claims never leak to Reporting");
 });
 
-test("Test 6: Harm discard — harm-language input → written: 0, zero rows, zero log lines containing the input", () => {
+test("Test 6: Harm discard — harm-language input → written: 0, zero rows, zero log lines containing the input", async () => {
   const { vault, bff } = freshSession();
   const harmInput =
     "I am so angry I could hurt Jordan the next time she pulls this at the exchange.";
-  const result = bff.postVaultIntake(
+  const result = await bff.postVaultIntake(
     { dad_id: DAD_ID, text: harmInput },
     { referenceDate: MONDAY },
   );
@@ -123,8 +123,8 @@ test("Test 6: Harm discard — harm-language input → written: 0, zero rows, ze
   assert.ok(!dump(vault).includes("hurt"), "zero retention of the input");
 });
 
-test("Test 7: Log hygiene — no message bodies, no 'Sam', no 'Taylor', no amounts in any log line", () => {
-  ventSession();
+test("Test 7: Log hygiene — no message bodies, no 'Sam', no 'Taylor', no amounts in any log line", async () => {
+  await ventSession();
   const all = logger.lines().join("\n");
   assert.ok(logger.lines().length > 0, "the vent run does produce id-only log lines");
   assert.ok(!/sam/i.test(all), "no 'Sam' in logs");

@@ -161,8 +161,9 @@ function monthName(referenceDate) {
 }
 
 // ---------------------------------------------------------------------------
-// The pipeline.
-export function extract(vault, dadId, text, opts = {}) {
+// The pipeline. Async so the same code runs against the in-memory vault
+// (sync methods) and the Postgres-backed SqlVault (async methods).
+export async function extract(vault, dadId, text, opts = {}) {
   const referenceDate = opts.referenceDate ?? new Date();
 
   // 1. harm check FIRST. Nothing parsed, nothing logged, nothing retained.
@@ -181,19 +182,22 @@ export function extract(vault, dadId, text, opts = {}) {
   const fields = extractFields(cold, { referenceDate });
 
   // 4 + 5. tag claim, one row per event.
-  const rows = fields.map((f) =>
-    vault.insertEvent(dadId, {
-      ...f,
-      pipe: "claim", // Intake writes claim ONLY (§3 events rule)
-      raw_quote: cold,
-    }),
-  );
+  const rows = [];
+  for (const f of fields) {
+    rows.push(
+      await vault.insertEvent(dadId, {
+        ...f,
+        pipe: "claim", // Intake writes claim ONLY (§3 events rule)
+        raw_quote: cold,
+      }),
+    );
+  }
 
   // 6. claim chase — the verify item, never the number.
   const chase = [];
   if (detectCountClaim(text)) {
     const item = `verify count in OFW record for ${monthName(referenceDate)}`;
-    vault.appendMissing(dadId, item);
+    await vault.appendMissing(dadId, item);
     chase.push(item);
   }
 

@@ -43,6 +43,24 @@ npm test
 Log output from the run lands in `test-output/run.log` for the hygiene grep
 (test 7 / §8 report).
 
+## Rented Postgres (test 9)
+
+`src/sqlvault.js` is the Postgres-backed vault path over
+`vault/001_schema.sql`. Two ways to run the Monday→Friday milestone:
+
+- **Direct connection** (machines with database egress):
+  `npm i pg`, then set `DATABASE_URL` in the environment and run `npm test`
+  — the test 9 case in `test/phase1.pg.test.js` stops skipping. The
+  connection string and its password live **only** in the environment.
+  Never commit them.
+- **Sanctioned SQL channel** (containers whose egress policy blocks the
+  database host): `npm run milestone9:emit` writes
+  `test-output/milestone9.json` — the exact statements the run performs,
+  generated end-to-end by the real middle layer with no manual step —
+  plus `test-output/run-pg.log` for the hygiene grep. Execute the steps,
+  then the assert queries, over the approved channel (e.g. the Supabase
+  MCP SQL runner) and compare against each `expect`.
+
 ## Rails (non-negotiable)
 
 Fake family only: Alex Rivera (dad) · Jordan Lee (co-parent) · Sam (8) ·
