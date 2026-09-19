@@ -1,0 +1,19 @@
+# Stub for the vault-app HTTP BFF. No secrets in this file.
+# Set DATABASE_URL in the Render dashboard (sync: false prompts once).
+# Do not put a connection string here.
+
+services:
+  - type: web
+    name: dde-vault-bff
+    runtime: docker
+    plan: free
+    dockerfilePath: ./vault-app/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: DATABASE_URL
+        sync: false

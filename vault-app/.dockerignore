@@ -1,0 +1,12 @@
+# Used when the Docker context is vault-app/ itself.
+# Preferred build is from the repo root (see Dockerfile header + root .dockerignore).
+
+node_modules
+test
+test-output
+exports
+.env
+.env.local
+.env.*.local
+*.log
+.DS_Store
