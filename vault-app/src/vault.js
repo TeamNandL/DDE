@@ -202,6 +202,14 @@ export class Vault {
     return this.state.get(dadId) ?? null;
   }
 
+  // Read helpers used by spreadsheet views (same names as SqlVault).
+  async listEvents(dadId) {
+    return this.events
+      .filter((e) => e.dad_id === dadId)
+      .slice()
+      .sort((a, b) => String(a.occurred_at).localeCompare(String(b.occurred_at)));
+  }
+
   appendMissing(dadId, item) {
     const existing = this.getState(dadId);
     const missing = [...(existing?.missing ?? [])];
@@ -215,7 +223,7 @@ export class Vault {
   // verified_export view — union of all tables where pipe='verified'.
   // The ONLY thing Reporting or any attorney helper may read.
   verifiedExport(dadId) {
-    const tag = (table) => (r) => ({ table, ...r });
+    const tag = (source_table) => (r) => ({ source_table, ...r });
     return [
       ...this.events.map(tag("events")),
       ...this.communications.map(tag("communications")),

@@ -1,13 +1,16 @@
-# vault-app — Phase 1 local in-memory proof
+# vault-app — Phase 1 working product
 
-Local, in-memory proof of the Gate 2 vault per `CLAUDE_CODE_PHASE1_KICKOFF.md`.
-No database, no network, no cloud. This exists only to prove the rails before
-anything is created on rented Postgres (Supabase creation is blocked until
-Nick's exact-yes).
+Gate 2 vault: in-memory proof (tests 1–8), rented-Postgres app path (test 9),
+optional HTTP BFF, and on-demand spreadsheet views. The vault is the source
+of truth. Spreadsheets are generated outputs — never stored as the record.
+
+Per `CLAUDE_CODE_PHASE1_KICKOFF.md`. Fake family only in demos:
+Alex Rivera (dad) · Jordan Lee (co-parent) · Sam (8) · Taylor (5).
+No real case data. No secrets in git.
 
 ## What this proves
 
-- Four data types plus `month_summary` (§3 semantics, in-memory)
+- Four data types plus `month_summary` (§3 semantics)
 - Two-pipe rule: `pipe ∈ {claim, verified}`, no third value, no null
 - Intake writes `claim` only; verified rows require `source_ref`
 - Harm language: heard → discarded → zero rows, zero log lines, zero retention
@@ -24,41 +27,124 @@ Nick's exact-yes).
 ## Layout
 
 ```
-src/vault.js    in-memory tables + views + write gates (mirrors §3)
-src/extract.js  the middle layer (§4): harm_check → strip_venom →
-                extract_fields → tag_pipe → write → claim_chase
-src/bff.js      thin BFF (§5): function-per-endpoint, no HTTP yet
-src/logger.js   hygiene logger — IDs only, capturable for grep
-test/phase1.test.js  §6 tests 1–8
-FIXED_VENT.md   the fixed vent (Alex Rivera) used as standard input
+src/vault.js        in-memory tables + views + write gates (mirrors §3)
+src/sqlvault.js     Postgres-backed vault (same interface, async)
+src/store.js        opens memory or SqlVault from DATABASE_URL
+src/extract.js      middle layer (§4): harm → venom → fields → claim write → chase
+src/bff.js          thin BFF functions (§5) — seats never touch the vault
+src/server.js       optional HTTP for those functions (`npm run serve`)
+src/export.js       CSV/XLSX views from vault data (not a store)
+src/cli-export.js   `npm run export:events` / `state` / `verified` / `all`
+src/logger.js       hygiene logger — IDs only
+src/schema.js       applies vault/001_schema.sql only (never 002)
+test/phase1.test.js     §6 tests 1–8 (in-memory)
+test/phase1.pg.test.js  §6 test 9 (rented Postgres, app write path only)
+FIXED_VENT.md       fake-family vent used as standard input
 ```
 
-## Run
+Schema lives next to the app, not inside it:
+
+- `vault/001_schema.sql` — tables, checks, `verified_export` / `affidavit_support` views
+- `vault/002_rls_plan.sql` — **draft only, do not run in Phase 1**
+
+## Tests
 
 ```
 cd vault-app
+npm install
 npm test
 ```
 
-Log output from the run lands in `test-output/run.log` for the hygiene grep
+| Script | What it runs |
+| --- | --- |
+| `npm test` | All tests: 1–8, test 9 (skip unless `DATABASE_URL`), exports, HTTP BFF |
+| `npm run test:phase1` | Tests 1–8 plus test 9 (the Phase 1 milestone suite) |
+| `npm run test:memory` | Tests 1–8 only (always in-memory) |
+
+Log output from tests 1–8 lands in `test-output/run.log` for the hygiene grep
 (test 7 / §8 report).
 
-## Rented Postgres (test 9)
+### Test 9 — one command
 
-`src/sqlvault.js` is the Postgres-backed vault path over
-`vault/001_schema.sql`. Test 9 (Monday→Friday milestone,
-`test/phase1.pg.test.js`) runs ONLY through the app write path:
-extract → BFF → SqlVault → node-postgres → rented Postgres. Console SQL,
-dashboard inserts, or any other channel that bypasses the app is not a
-valid proof of this milestone.
+Test 9 is **extract → BFF → SqlVault → node-postgres → Postgres** only.
+Console SQL, dashboard inserts, or any channel that bypasses the app is not
+a valid proof.
 
-To run it: `npm install`, set `DATABASE_URL` in the environment, then
-`npm test`. The connection string and its password live **only** in the
-environment — never commit them. Without `DATABASE_URL`, or where the
-network blocks the database host, the test skips and test 9 counts as
-BLOCKED, not passed.
+```
+cd vault-app
+npm install
+DATABASE_URL="postgresql://USER:PASSWORD@HOST:5432/postgres" npm test
+```
+
+That is the one command. `001_schema.sql` is applied idempotently by the
+store (`create table if not exists` / `create or replace view`). RLS
+(`002_rls_plan.sql`) is **not** applied.
+
+`DATABASE_URL` lives only in the environment — never commit it. Copy
+`.env.example` to `.env` if you want a local file; `.env` is gitignored
+and does not override a URL already in the environment.
+
+Intended rented target: Supabase project **dde-vault**. Without
+`DATABASE_URL`, or where the network cannot reach the host, test 9
+**skips** and counts as **BLOCKED**, not passed.
+
+## Optional HTTP BFF
+
+Off unless you start it. Product bots call these Phase 1 routes:
+
+| Method | Path | Body / query |
+| --- | --- | --- |
+| `POST` | `/vault/intake` | `{ dad_id, text }` → `{ written, chase }` |
+| `GET` | `/vault/state` | `?dad_id=` → state row |
+| `PUT` | `/vault/state` | `{ dad_id, phase?, this_week?, missing?, next_action? }` |
+| `POST` | `/vault/comms/cold` | `{ dad_id, body_cold, channel }` → `{ id }` |
+| `POST` | `/vault/comms/pull` | `{ dad_id, channel, source_ref, body_cold?, sent_at? }` → `{ id }` |
+| `GET` | `/vault/export/verified` | `?dad_id=` → verified rows only |
+
+```
+npm run serve -- --http
+npm run serve -- --http --demo          # in-memory fake-family Alex Rivera
+DATABASE_URL=... npm run serve -- --http   # rented Postgres, no demo seed
+```
+
+Listens on `127.0.0.1:8787` (`PORT` / `HOST` override). Auth is a later
+gate — do not expose this as a public client.
+
+There is **no** HTTP route that returns claim rows to Reporting.
+
+## Spreadsheet views (from the vault)
+
+Generated on demand. Do not commit `exports/` and do not treat the files
+as the record.
+
+| Script | View |
+| --- | --- |
+| `npm run export:events` | events time-log |
+| `npm run export:state` | state / missing checklist |
+| `npm run export:verified` | `verified_export` (Reporting) |
+| `npm run export:all` | all three, CSV + XLSX |
+
+```
+npm run export:all -- --demo
+DATABASE_URL=... npm run export:events -- --dad-id <uuid>
+```
+
+`--demo` uses the fake family only (FIXED_VENT + a court-safe OFW cold
+sentence and a verified OFW pull) and **stays in-memory** even if
+`DATABASE_URL` is set, so a leftover env var cannot write demo rows into
+rented Postgres. Pass `--on-db` only if you really mean to seed the demo
+into that database. Each XLSX includes a `_generated` sheet stating the
+vault is the source of truth.
+
+## Schema
+
+```
+DATABASE_URL=... npm run schema:apply
+```
+
+Applies `vault/001_schema.sql` only. Leaves RLS disabled.
 
 ## Rails (non-negotiable)
 
-Fake family only: Alex Rivera (dad) · Jordan Lee (co-parent) · Sam (8) ·
-Taylor (5). No real case data, ever. Education and organization only.
+Fake family only in demos. No Nick real case data, ever. Education and
+organization only. Connection strings and passwords stay in the environment.

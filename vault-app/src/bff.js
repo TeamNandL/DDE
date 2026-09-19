@@ -1,7 +1,8 @@
 // Thin BFF (§5) — seats never touch the vault directly.
 //
 // Phase 1: function signatures + one working implementation each, mapped
-// 1:1 to the contract routes. No HTTP framework and no auth middleware yet.
+// 1:1 to the contract routes. Optional HTTP lives in server.js
+// (`npm run serve` / `--http`) — this module stays framework-free.
 //
 // AUTH GOES HERE (later gate): every function below will sit behind auth
 // middleware that resolves the session to a dad_id (Supabase Auth →
