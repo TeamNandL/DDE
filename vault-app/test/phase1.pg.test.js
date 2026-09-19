@@ -9,11 +9,17 @@
 // a container whose egress policy blocks the database host, this test
 // skips and Phase 1 reports test 9 as BLOCKED — it is not proven another
 // way.
+//
+// One command (after `npm install`):
+//   DATABASE_URL="postgresql://..." npm test
+// Schema 001 is applied idempotently by the store factory. 002 (RLS) is not.
 
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 
+import "../src/env.js";
+import { databaseUrl, openStore } from "../src/store.js";
 import { SqlVault } from "../src/sqlvault.js";
 import { makeBff } from "../src/bff.js";
 
@@ -33,17 +39,16 @@ export const DENIED_VISIT_VENT =
 export const HARM_INPUT =
   "I am done being calm, I want to hurt Jordan for keeping the kids from me.";
 
-const url = process.env.DATABASE_URL;
+const url = databaseUrl();
 
 test(
   "Test 9: Monday→Friday milestone on rented Postgres (app write path only)",
   { skip: url ? false : "BLOCKED: DATABASE_URL not set / database egress unavailable" },
   async () => {
-    const { default: pg } = await import("pg");
-    const pool = new pg.Pool({ connectionString: url });
-    const exec = async (sql) => (await pool.query(sql)).rows;
-    const vault = new SqlVault(exec);
-    const bff = makeBff(vault);
+    const store = await openStore({ databaseUrl: url, applySchema: true });
+    assert.equal(store.kind, "postgres", "test 9 must use rented Postgres, not memory");
+    assert.ok(store.vault instanceof SqlVault, "writes go through SqlVault");
+    const bff = makeBff(store.vault);
     const dadId = randomUUID();
 
     try {
@@ -75,12 +80,10 @@ test(
 
       // Read-only verification of what actually landed (asserts may inspect
       // the DB directly; only the WRITE path must be the app).
-      const evs = (
-        await pool.query(
-          "select pipe, event_type, raw_quote, kids, notes from events where dad_id = $1",
-          [dadId],
-        )
-      ).rows;
+      const evs = (await store.query(
+        "select pipe, event_type, raw_quote, kids, notes from events where dad_id = $1",
+        [dadId],
+      )).rows;
       assert.equal(evs.length, 1, "exactly the one claim row (harm left zero)");
       assert.equal(evs[0].pipe, "claim");
       assert.equal(evs[0].event_type, "denied_visit");
@@ -89,7 +92,7 @@ test(
       assert.ok(!/sabotage|on purpose/i.test(evs[0].raw_quote), "venom stripped");
 
       const counts = (
-        await pool.query(
+        await store.query(
           `select (select count(*) from events where dad_id = $1)::int as events,
                   (select count(*) from communications where dad_id = $1)::int as communications,
                   (select count(*) from documents where dad_id = $1)::int as documents,
@@ -106,7 +109,7 @@ test(
         state: 1,
       });
     } finally {
-      await pool.end();
+      await store.close();
     }
   },
 );

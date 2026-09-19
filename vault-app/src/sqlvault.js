@@ -91,6 +91,7 @@ export class SqlVault {
          updated_at = now();`,
     );
     log("state.upsert", { table: "state", dad: dadId });
+    return this.getState(dadId);
   }
 
   async getState(dadId) {
@@ -101,10 +102,22 @@ export class SqlVault {
     return rows?.[0] ?? null;
   }
 
+  async listEvents(dadId) {
+    return (
+      (await this.exec(
+        `select id, dad_id, pipe, created_at, source_ref, raw_quote, event_type,
+                occurred_at, scheduled_at, location, kids, notes
+           from events
+          where dad_id = ${lit(dadId)}
+          order by occurred_at;`,
+      )) ?? []
+    );
+  }
+
   async verifiedExport(dadId) {
     return (
       (await this.exec(
-        `select source_table, id, dad_id, pipe, created_at, source_ref
+        `select source_table, id, dad_id, pipe, created_at, source_ref, row
            from verified_export where dad_id = ${lit(dadId)};`,
       )) ?? []
     );

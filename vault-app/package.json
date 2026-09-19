@@ -2,12 +2,21 @@
   "name": "dde-vault-app",
   "version": "0.1.0",
   "private": true,
-  "description": "DDE Phase 1 local in-memory vault proof (no cloud, no deps)",
+  "description": "DDE Phase 1 vault: in-memory proof, rented-Postgres path, HTTP BFF, spreadsheet views",
   "type": "module",
   "scripts": {
-    "test": "node --test test/phase1.test.js test/phase1.pg.test.js"
+    "test": "node --test test/*.test.js",
+    "test:phase1": "node --test test/phase1.test.js test/phase1.pg.test.js",
+    "test:memory": "node --test test/phase1.test.js",
+    "serve": "node src/server.js --http",
+    "export:events": "node src/cli-export.js events",
+    "export:state": "node src/cli-export.js state",
+    "export:verified": "node src/cli-export.js verified",
+    "export:all": "node src/cli-export.js all",
+    "schema:apply": "node src/schema-apply.js"
   },
-  "devDependencies": {
+  "dependencies": {
+    "exceljs": "^4.4.0",
     "pg": "^8.13.0"
   }
 }

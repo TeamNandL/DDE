@@ -1,6 +1,6 @@
 // Phase 1 §6 tests 1–8, run against the local in-memory vault proof.
-// Test 9 (Monday→Friday on rented Postgres) lives in phase1.pg.test.js /
-// milestone9-driver.js.
+// Test 9 (Monday→Friday on rented Postgres) lives in phase1.pg.test.js
+// and runs only through extract → BFF → SqlVault → node-postgres.
 
 import test from "node:test";
 import assert from "node:assert/strict";

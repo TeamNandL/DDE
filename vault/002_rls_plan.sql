@@ -1,4 +1,5 @@
 -- DDE vault — RLS PLAN (kickoff §3). DRAFT ONLY — DO NOT RUN IN PHASE 1.
+-- vault-app never applies this file (schema:apply and test 9 use 001 only).
 --
 -- RLS is documented now and enforced when the auth gate lands (Supabase
 -- Auth). Until then the vault is reached only through the thin BFF; no
