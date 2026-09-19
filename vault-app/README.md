@@ -33,6 +33,8 @@ src/store.js        opens memory or SqlVault from DATABASE_URL
 src/extract.js      middle layer (§4): harm → venom → fields → claim write → chase
 src/bff.js          thin BFF functions (§5) — seats never touch the vault
 src/server.js       optional HTTP for those functions (`npm run serve`)
+Dockerfile          production image: `node src/server.js --http` on 0.0.0.0:$PORT
+HOSTING.md          Fly.io / Render free-tier deploy (DATABASE_URL is a secret)
 src/export.js       CSV/XLSX views from vault data (not a store)
 src/cli-export.js   `npm run export:events` / `state` / `verified` / `all`
 src/logger.js       hygiene logger — IDs only
@@ -107,8 +109,11 @@ npm run serve -- --http --demo          # in-memory fake-family Alex Rivera
 DATABASE_URL=... npm run serve -- --http   # rented Postgres, no demo seed
 ```
 
-Listens on `127.0.0.1:8787` (`PORT` / `HOST` override). Auth is a later
-gate — do not expose this as a public client.
+Listens on `127.0.0.1:8787` (`PORT` / `HOST` override). Production and
+Docker bind `0.0.0.0:$PORT` — see [`HOSTING.md`](HOSTING.md). Auth is a
+later gate — do not expose this as a public client.
+
+`GET /health` returns `{ "ok": true }` and does not touch the vault.
 
 There is **no** HTTP route that returns claim rows to Reporting.
 

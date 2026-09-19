@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 
 import { Vault } from "../src/vault.js";
 import { makeBff } from "../src/bff.js";
-import { createServer, listenServer, PHASE1_ROUTES } from "../src/server.js";
+import { createServer, listenServer, PHASE1_ROUTES, resolveListenHostPort } from "../src/server.js";
 import { readFixedVent } from "../src/demo.js";
 import * as logger from "../src/logger.js";
 
@@ -45,7 +45,11 @@ test("HTTP BFF Phase 1 routes: intake → state → verified stays clean; comms 
   try {
     const health = await jsonReq(s.base, "GET", "/health");
     assert.equal(health.status, 200);
-    assert.deepEqual(health.data.routes, PHASE1_ROUTES);
+    assert.deepEqual(health.data, { ok: true });
+
+    const root = await jsonReq(s.base, "GET", "/");
+    assert.equal(root.status, 200);
+    assert.deepEqual(root.data.routes, PHASE1_ROUTES);
 
     const intake = await jsonReq(s.base, "POST", "/vault/intake", {
       dad_id,
@@ -106,6 +110,22 @@ test("HTTP BFF Phase 1 routes: intake → state → verified stays clean; comms 
   } finally {
     await s.close();
   }
+});
+
+test("resolveListenHostPort: loopback locally, 0.0.0.0 in production", () => {
+  assert.deepEqual(resolveListenHostPort({ env: {} }), { host: "127.0.0.1", port: 8787 });
+  assert.deepEqual(resolveListenHostPort({ env: { NODE_ENV: "production" } }), {
+    host: "0.0.0.0",
+    port: 8787,
+  });
+  assert.deepEqual(resolveListenHostPort({ env: { HOST: "0.0.0.0", PORT: "3000" } }), {
+    host: "0.0.0.0",
+    port: 3000,
+  });
+  assert.deepEqual(resolveListenHostPort({ host: "127.0.0.1", port: "9999", env: { HOST: "0.0.0.0" } }), {
+    host: "127.0.0.1",
+    port: 9999,
+  });
 });
 
 test("HTTP BFF rejects missing dad_id and unknown routes", async () => {

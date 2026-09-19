@@ -3,7 +3,9 @@
 // Off unless you start this process (`npm run serve` or `node src/server.js --http`).
 // Product bots call these routes; seats still never touch the vault directly.
 //
-// AUTH is not built (later gate). Bind to 127.0.0.1 by default.
+// AUTH is not built (later gate). Bind to 127.0.0.1 by default locally.
+// Production / container hosts (Docker, Fly, Render) listen on 0.0.0.0:$PORT
+// — see HOSTING.md. That is a bind note only; no auth is added here.
 
 import http from "node:http";
 import { resolve } from "node:path";
@@ -89,7 +91,12 @@ export async function handleBffRequest(bff, req, url, body) {
   const method = req.method || "GET";
   const q = url.searchParams;
 
-  if (method === "GET" && (path === "/" || path === "/health")) {
+  // Host healthcheck — no vault, no DB, no dad_id.
+  if (method === "GET" && path === "/health") {
+    return { status: 200, body: { ok: true } };
+  }
+
+  if (method === "GET" && path === "/") {
     return {
       status: 200,
       body: {
@@ -196,6 +203,15 @@ export async function listenServer(server, { host, port }) {
   return server.address();
 }
 
+// Local default is loopback. Production (NODE_ENV=production or HOST=)
+// binds all interfaces so Fly/Render/Docker can reach the process.
+export function resolveListenHostPort({ host, port, env = process.env } = {}) {
+  const listenHost =
+    host || env.HOST || (env.NODE_ENV === "production" ? "0.0.0.0" : "127.0.0.1");
+  const listenPort = Number(port || env.PORT || 8787);
+  return { host: listenHost, port: listenPort };
+}
+
 export async function main(argv = process.argv.slice(2)) {
   const { values } = parseArgs({
     args: argv,
@@ -214,7 +230,8 @@ export async function main(argv = process.argv.slice(2)) {
     process.stdout.write(
       "DDE Phase 1 HTTP BFF (optional)\n\n" +
         "  npm run serve [-- --demo] [-- --port 8787] [-- --host 127.0.0.1]\n" +
-        "  node src/server.js --http --demo\n\n" +
+        "  node src/server.js --http --demo\n" +
+        "  HOST=0.0.0.0 PORT=8787 node src/server.js --http   # container / Fly / Render\n\n" +
         "Routes: " +
         PHASE1_ROUTES.join(", ") +
         "\n",
@@ -230,8 +247,10 @@ export async function main(argv = process.argv.slice(2)) {
     await seedDemo(bff, DEMO_DAD_ID);
   }
 
-  const host = values.host || process.env.HOST || "127.0.0.1";
-  const port = Number(values.port || process.env.PORT || 8787);
+  const { host, port } = resolveListenHostPort({
+    host: values.host,
+    port: values.port,
+  });
   const server = createServer(bff);
   const addr = await listenServer(server, { host, port });
   const bound = typeof addr === "object" && addr ? `http://${addr.address}:${addr.port}` : "";
