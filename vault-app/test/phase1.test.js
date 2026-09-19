@@ -59,11 +59,24 @@ test("Test 1: Intake claim write — fixed vent → ≥1 events row, pipe='claim
 
 test("Test 2: Claim chase, not count — 'third time this month' → no number stored; state.missing has a verify item", () => {
   const { vault } = ventSession();
-  const stored = dump(vault);
-  assert.ok(!/\bthird\b/i.test(stored), "ordinal 'third' stored nowhere");
-  assert.ok(!/\bthree times\b/i.test(stored), "'three times' stored nowhere");
-  assert.ok(!/\b3 times\b/i.test(stored), "'3 times' stored nowhere");
-  assert.ok(!/\bthis month\b/i.test(stored), "count-claim sentence stored nowhere");
+  // §4: raw_quote = original minus harm/venom — the dad's own words stay on
+  // the claim pipe, count claim included.
+  const ev = vault.events[0];
+  assert.ok(/third time/i.test(ev.raw_quote), "claim raw_quote keeps the dad's own words");
+  // But the count is never stored as data: no structured field anywhere
+  // (notes, kids, location, state, missing, summaries) carries it, and no
+  // verified row exists at all.
+  const structured = JSON.stringify(
+    vault.allRows().map(({ raw_quote, ...rest }) => rest),
+  );
+  assert.ok(!/\bthird\b/i.test(structured), "ordinal 'third' in no structured field");
+  assert.ok(!/\bthree times\b/i.test(structured), "'three times' in no structured field");
+  assert.ok(!/\b3 times\b/i.test(structured), "'3 times' in no structured field");
+  assert.equal(
+    vault.verifiedExport(DAD_ID).length,
+    0,
+    "the count claim produced nothing on the verified pipe",
+  );
   const state = vault.getState(DAD_ID);
   assert.ok(state, "state row exists");
   const item = state.missing.find((m) => /verify count in OFW record for/i.test(m));

@@ -62,17 +62,6 @@ function detectCountClaim(text) {
   return COUNT_CLAIM.test(text);
 }
 
-// The claim sentence itself carries the number, so the whole sentence is
-// redacted from anything stored — the chase item replaces it.
-function redactCountClaim(text) {
-  const sentences = text.match(/[^.!?]+[.!?]*/g) ?? [text];
-  return sentences
-    .filter((s) => !COUNT_CLAIM.test(s))
-    .map((s) => s.trim())
-    .join(" ")
-    .trim();
-}
-
 // ---------------------------------------------------------------------------
 // 3. extract_fields — deterministic rules sized to the fixed vent.
 const KNOWN_KIDS = ["Sam", "Taylor"]; // fake family only (§2)
@@ -181,19 +170,22 @@ export function extract(vault, dadId, text, opts = {}) {
     return { written: 0, chase: [] };
   }
 
-  // 2. venom out. 6a. count claims out of anything stored.
+  // 2. venom out. raw_quote = original text minus harm/venom (§4) — the
+  // dad's own words survive on the claim pipe, count claims included. The
+  // count is never written as a structured field or a verified row; the
+  // chase item below is what the record keeps of it.
   const cold = stripVenom(text);
-  const storable = redactCountClaim(cold); // raw_quote = original minus harm/venom (count-claim sentence redacted with it)
 
-  // 3. fields from the venom-free text.
-  const fields = extractFields(storable, { referenceDate });
+  // 3. fields from the venom-free text. notes/location/kids/times are
+  // constructed observable fields — a count claim never lands in them.
+  const fields = extractFields(cold, { referenceDate });
 
   // 4 + 5. tag claim, one row per event.
   const rows = fields.map((f) =>
     vault.insertEvent(dadId, {
       ...f,
       pipe: "claim", // Intake writes claim ONLY (§3 events rule)
-      raw_quote: storable,
+      raw_quote: cold,
     }),
   );
 

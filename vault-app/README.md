@@ -13,7 +13,8 @@ Nick's exact-yes).
 - Harm language: heard → discarded → zero rows, zero log lines, zero retention
 - Venom stripped: characterizations of the co-parent never stored
 - Claim chase: count/frequency claims become a `state.missing` verify item —
-  the number itself is never stored
+  the number is never written as a structured field or verified row (the
+  dad's own words stay in the claim row's `raw_quote` per §4)
 - `verified_export` is the only read surface for Reporting; it never returns
   claim rows
 - `month_summary` gate: `pipe='verified'` only when every `source_ref`
