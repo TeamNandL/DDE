@@ -5,7 +5,9 @@
   "description": "DDE Phase 1 local in-memory vault proof (no cloud, no deps)",
   "type": "module",
   "scripts": {
-    "test": "node --test test/phase1.test.js test/phase1.pg.test.js",
-    "milestone9:emit": "node test/milestone9-driver.js emit"
+    "test": "node --test test/phase1.test.js test/phase1.pg.test.js"
+  },
+  "devDependencies": {
+    "pg": "^8.13.0"
   }
 }

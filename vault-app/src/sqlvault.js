@@ -6,17 +6,14 @@
 //
 //   exec(sql) -> Promise<rows[]>
 //
-// Transports:
-//   * node-postgres Pool against DATABASE_URL (local/dev machines) — the
-//     connection string with its password lives ONLY in the environment,
-//     never in this repo. See test/phase1.pg.test.js.
-//   * an emit-mode executor that records each fully-materialized statement
-//     instead of running it (test/milestone9-driver.js) so the identical
-//     sequence can be executed over a sanctioned channel (e.g. the Supabase
-//     MCP SQL runner) when direct egress to the database is not allowed.
+// Transport: node-postgres Pool against DATABASE_URL — the connection
+// string with its password lives ONLY in the environment, never in this
+// repo. See test/phase1.pg.test.js. This module IS the app write path to
+// rented Postgres; console SQL or any channel that bypasses it proves
+// nothing.
 //
-// Every operation is a single self-contained statement — no read-modify-write
-// across calls — so an emitted sequence replays exactly.
+// Every operation is a single self-contained statement — no
+// read-modify-write across calls.
 
 import { randomUUID } from "node:crypto";
 import { log } from "./logger.js";

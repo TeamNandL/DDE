@@ -46,20 +46,17 @@ Log output from the run lands in `test-output/run.log` for the hygiene grep
 ## Rented Postgres (test 9)
 
 `src/sqlvault.js` is the Postgres-backed vault path over
-`vault/001_schema.sql`. Two ways to run the Monday→Friday milestone:
+`vault/001_schema.sql`. Test 9 (Monday→Friday milestone,
+`test/phase1.pg.test.js`) runs ONLY through the app write path:
+extract → BFF → SqlVault → node-postgres → rented Postgres. Console SQL,
+dashboard inserts, or any other channel that bypasses the app is not a
+valid proof of this milestone.
 
-- **Direct connection** (machines with database egress):
-  `npm i pg`, then set `DATABASE_URL` in the environment and run `npm test`
-  — the test 9 case in `test/phase1.pg.test.js` stops skipping. The
-  connection string and its password live **only** in the environment.
-  Never commit them.
-- **Sanctioned SQL channel** (containers whose egress policy blocks the
-  database host): `npm run milestone9:emit` writes
-  `test-output/milestone9.json` — the exact statements the run performs,
-  generated end-to-end by the real middle layer with no manual step —
-  plus `test-output/run-pg.log` for the hygiene grep. Execute the steps,
-  then the assert queries, over the approved channel (e.g. the Supabase
-  MCP SQL runner) and compare against each `expect`.
+To run it: `npm install`, set `DATABASE_URL` in the environment, then
+`npm test`. The connection string and its password live **only** in the
+environment — never commit them. Without `DATABASE_URL`, or where the
+network blocks the database host, the test skips and test 9 counts as
+BLOCKED, not passed.
 
 ## Rails (non-negotiable)
 

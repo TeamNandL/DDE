@@ -1,76 +1,112 @@
-// Test 9 — Monday→Friday milestone, direct-connection variant.
+// Test 9 — Monday→Friday milestone on rented Postgres (§0, §6).
 //
-// Runs the full milestone against rented Postgres when DATABASE_URL is set
-// in the environment (node-postgres, `npm i pg` first). The connection
-// string and its password live ONLY in the environment — never in this
-// repo. In containers whose egress policy blocks the database host, use
-// test/milestone9-driver.js instead (same sequence over a sanctioned SQL
-// channel).
+// The ONLY write path is the app path: extract → BFF → SqlVault →
+// node-postgres → rented Postgres (vault/001_schema.sql). No console SQL,
+// no MCP inserts, no manual step between Monday and Friday.
+//
+// Requires DATABASE_URL in the environment (never committed — the
+// connection string and its password live only in env). Without it, or in
+// a container whose egress policy blocks the database host, this test
+// skips and Phase 1 reports test 9 as BLOCKED — it is not proven another
+// way.
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 
 import { SqlVault } from "../src/sqlvault.js";
 import { makeBff } from "../src/bff.js";
-import {
-  buildMilestone,
-  DENIED_VISIT_VENT,
-  HARM_INPUT,
-  MONDAY,
-} from "./milestone9-driver.js";
+
+// Day 1 (Monday) of the milestone week. Friday is just the later read.
+export const MONDAY = new Date("2026-09-14T12:00:00");
+
+// The §0 milestone opens with a denied-visit claim. Fake family only:
+// Alex Rivera venting about Jordan Lee; Sam (8), Taylor (5). Contains a
+// count claim ("second time") to chase and venom to strip.
+export const DENIED_VISIT_VENT =
+  "Jordan didn't let me pick up Sam and Taylor for my weekend visit today. " +
+  "I was at the door at five like the schedule says and she wouldn't let " +
+  "them leave with me. This is the second time this month. She is doing " +
+  "this on purpose to sabotage my time with the kids.";
+
+// Harm-language control input for the zero-rows-anywhere leg.
+export const HARM_INPUT =
+  "I am done being calm, I want to hurt Jordan for keeping the kids from me.";
 
 const url = process.env.DATABASE_URL;
 
 test(
-  "Test 9: Monday→Friday milestone on rented Postgres",
-  { skip: url ? false : "DATABASE_URL not set — run via milestone9-driver.js emit + sanctioned SQL channel" },
+  "Test 9: Monday→Friday milestone on rented Postgres (app write path only)",
+  { skip: url ? false : "BLOCKED: DATABASE_URL not set / database egress unavailable" },
   async () => {
     const { default: pg } = await import("pg");
     const pool = new pg.Pool({ connectionString: url });
     const exec = async (sql) => (await pool.query(sql)).rows;
     const vault = new SqlVault(exec);
     const bff = makeBff(vault);
-    const { randomUUID } = await import("node:crypto");
     const dadId = randomUUID();
 
     try {
-      // Day 1 (Monday): denied-visit claim via Intake.
+      // Day 1 (Monday): denied-visit claim through Intake — the app path.
       const monday = await bff.postVaultIntake(
         { dad_id: dadId, text: DENIED_VISIT_VENT },
         { referenceDate: MONDAY },
       );
       assert.ok(monday.written >= 1, "claim written day 1");
+      assert.ok(monday.chase.length >= 1, "count claim chased, not stored");
 
-      // Harm input: zero rows anywhere.
+      // Harm input through the same path: zero rows anywhere.
       const harm = await bff.postVaultIntake(
         { dad_id: dadId, text: HARM_INPUT },
         { referenceDate: MONDAY },
       );
-      assert.equal(harm.written, 0);
+      assert.equal(harm.written, 0, "harm input writes nothing");
 
-      // Day 5 (Friday): Edge reads state/missing — no re-entry between.
+      // Day 5 (Friday): Edge reads state/missing via the BFF — no re-entry
+      // and no write of any kind between day 1 and this read.
       const state = await bff.getVaultState({ dad_id: dadId });
       assert.ok(state.next_action, "next_action readable day 5");
       assert.ok(state.missing.length > 0, "missing readable day 5");
+      assert.ok(!/\d/.test(state.next_action), "no number in the chase item");
 
-      // Verified export still empty.
+      // Verified export still empty — claims never reach Reporting.
       const rows = await bff.getVaultExportVerified({ dad_id: dadId });
       assert.equal(rows.length, 0, "verified export clean");
 
-      const counts = await vault.countRows(dadId);
-      assert.equal(Number(counts.events), 1, "exactly the one claim row");
+      // Read-only verification of what actually landed (asserts may inspect
+      // the DB directly; only the WRITE path must be the app).
+      const evs = (
+        await pool.query(
+          "select pipe, event_type, raw_quote, kids, notes from events where dad_id = $1",
+          [dadId],
+        )
+      ).rows;
+      assert.equal(evs.length, 1, "exactly the one claim row (harm left zero)");
+      assert.equal(evs[0].pipe, "claim");
+      assert.equal(evs[0].event_type, "denied_visit");
+      assert.ok(/second time/i.test(evs[0].raw_quote), "dad's own words kept in raw_quote");
+      assert.ok(!/second time|\b2\b/i.test(evs[0].notes ?? ""), "no count in structured notes");
+      assert.ok(!/sabotage|on purpose/i.test(evs[0].raw_quote), "venom stripped");
+
+      const counts = (
+        await pool.query(
+          `select (select count(*) from events where dad_id = $1)::int as events,
+                  (select count(*) from communications where dad_id = $1)::int as communications,
+                  (select count(*) from documents where dad_id = $1)::int as documents,
+                  (select count(*) from month_summary where dad_id = $1)::int as month_summary,
+                  (select count(*) from state where dad_id = $1)::int as state`,
+          [dadId],
+        )
+      ).rows[0];
+      assert.deepEqual(counts, {
+        events: 1,
+        communications: 0,
+        documents: 0,
+        month_summary: 0,
+        state: 1,
+      });
     } finally {
       await pool.end();
     }
   },
 );
-
-// Re-exported so `node --test` treats a build failure as a test failure even
-// without DATABASE_URL.
-test("milestone plan builds (emit mode sanity)", async () => {
-  const plan = await buildMilestone();
-  assert.ok(plan.steps.length >= 2, "Monday intake emits event insert + state upsert");
-  assert.equal(plan.in_process.harm_written, 0);
-  assert.equal(plan.in_process.harm_emitted_sql_statements, 0);
-  assert.equal(plan.in_process.harm_emitted_log_lines, 0);
-});
