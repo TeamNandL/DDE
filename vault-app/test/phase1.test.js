@@ -134,6 +134,50 @@ test("Test 7: Log hygiene — no message bodies, no 'Sam', no 'Taylor', no amoun
   assert.ok(!/parking lot|sitter|supposed to/i.test(all), "no message-body fragments in logs");
 });
 
+test("cancelled/denied visit phrasing writes ≥1 claim event and still chases the count", async () => {
+  const cases = [
+    {
+      text: "Jordan cancelled Tuesday again. Sam and Taylor were waiting. This is the third time this month.",
+      event_type: "denied_visit",
+    },
+    {
+      text: "Jordan canceled Saturday pickup. Sam and Taylor were waiting. This is the third time this month.",
+      event_type: "denied_visit",
+    },
+    {
+      text: "Jordan denied the visit Tuesday. Sam and Taylor were waiting. This is the third time this month.",
+      event_type: "denied_visit",
+    },
+    {
+      text: "Jordan cancelled and showed up late at 7pm for the exchange. This is the third time this month.",
+      event_type: "late_exchange",
+    },
+  ];
+
+  for (const { text, event_type } of cases) {
+    const { vault, bff } = freshSession();
+    const result = await bff.postVaultIntake(
+      { dad_id: DAD_ID, text },
+      { referenceDate: MONDAY },
+    );
+    assert.ok(result.written >= 1, `intake must write ≥1 claim event for: ${text}`);
+    assert.ok(result.chase.length >= 1, "count claim still chased");
+    const ev = vault.events[0];
+    assert.equal(ev.pipe, "claim");
+    assert.equal(ev.event_type, event_type, text);
+    assert.ok(/third time/i.test(ev.raw_quote), "raw_quote keeps the count phrase");
+    const structured = JSON.stringify(
+      vault.allRows().map(({ raw_quote, ...rest }) => rest),
+    );
+    assert.ok(!/\bthird\b/i.test(structured), "ordinal 'third' in no structured field");
+    const state = vault.getState(DAD_ID);
+    const item = state.missing.find((m) => /verify count in OFW record for/i.test(m));
+    assert.ok(item, "claim_chase still writes Missing");
+    assert.equal(item, "verify count in OFW record for September");
+    assert.ok(!/\d/.test(item), "the verify item itself carries no number");
+  }
+});
+
 test("Test 8: month_summary gate — one unverified source_ref → write rejected or forced to pipe='claim'", () => {
   const { vault } = freshSession();
   const verified = vault.insertEvent(DAD_ID, {

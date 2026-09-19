@@ -93,14 +93,18 @@ export function extractFields(text, { referenceDate }) {
   const mentionsExchange = /\bexchange\b/.test(lower);
   const late =
     /\b(late|didn'?t show(?: up)?\s+until|not\s+until)\b/.test(lower);
+  // Cancelled/denied visit phrasing is a claim event even when the vent
+  // never says "visit" or "exchange" ("Jordan cancelled Tuesday again").
   const denied =
-    /\b(denied|refused|wouldn'?t let|didn'?t let|no[- ]showed|never showed)\b/.test(lower);
+    /\b(denied|refused|wouldn'?t let|didn'?t let|no[- ]showed|never showed|cancel(?:l?ed|s|l?ing)?|called off)\b/.test(
+      lower,
+    );
 
   let event_type = null;
-  if (mentionsExchange && denied) event_type = "denied_visit";
-  else if (mentionsExchange && late) event_type = "late_exchange";
-  else if (mentionsExchange) event_type = "exchange";
+  // Late wins when both apply so "cancelled and late" is late_exchange.
+  if (late && (mentionsExchange || denied)) event_type = "late_exchange";
   else if (denied) event_type = "denied_visit";
+  else if (mentionsExchange) event_type = "exchange";
   else if (/\bvisit\b/.test(lower)) event_type = "visit";
   else if (/\b(call|phone)\b/.test(lower)) event_type = "call";
 
