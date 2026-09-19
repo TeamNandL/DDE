@@ -134,6 +134,16 @@ test("Test 7: Log hygiene — no message bodies, no 'Sam', no 'Taylor', no amoun
   assert.ok(!/parking lot|sitter|supposed to/i.test(all), "no message-body fragments in logs");
 });
 
+// Quill live intake round-trip expected (fake family only):
+//   POST /vault/intake {
+//     dad_id,
+//     text: "Jordan cancelled Tuesday again. Sam and Taylor were waiting. This is the third time this month."
+//   }
+//   → { written: ≥1, chase: ["verify count in OFW record for <Month>"] }
+//   events row: pipe='claim', event_type='denied_visit' (or late_exchange if late)
+//   raw_quote keeps "third time this month"; no structured count field
+//   claim_chase writes state.missing verify-count (no number)
+//   GET /vault/export/verified → []
 test("cancelled/denied visit phrasing writes ≥1 claim event and still chases the count", async () => {
   const cases = [
     {
@@ -175,6 +185,8 @@ test("cancelled/denied visit phrasing writes ≥1 claim event and still chases t
     assert.ok(item, "claim_chase still writes Missing");
     assert.equal(item, "verify count in OFW record for September");
     assert.ok(!/\d/.test(item), "the verify item itself carries no number");
+    const verified = await bff.getVaultExportVerified({ dad_id: DAD_ID });
+    assert.deepEqual(verified, [], "verified export stays empty — claims never leak");
   }
 });
 
