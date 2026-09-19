@@ -33,7 +33,8 @@ function usage() {
   return `Usage: node src/cli-export.js <events|state|verified|all> [options]
 
 Options:
-  --demo              Seed the fake-family demo (Alex Rivera) into memory or DB
+  --demo              Seed the fake-family demo (Alex Rivera) in memory
+  --on-db             With --demo, seed into DATABASE_URL (off by default)
   --dad-id <uuid>     Tenant to export (required against DATABASE_URL unless --demo)
   --out <dir>         Output directory (default: vault-app/exports/)
   --help              Show this help
@@ -52,6 +53,7 @@ export async function runExportCli(argv = process.argv.slice(2)) {
     args: argv,
     options: {
       demo: { type: "boolean", default: false },
+      "on-db": { type: "boolean", default: false },
       "dad-id": { type: "string" },
       out: { type: "string" },
       help: { type: "boolean", default: false },
@@ -71,9 +73,13 @@ export async function runExportCli(argv = process.argv.slice(2)) {
   const views = VIEW_ALIASES[which] === "all" ? ALL_VIEWS : [VIEW_ALIASES[which]];
   const url = databaseUrl();
   const demo = values.demo;
+  const onDb = values["on-db"];
   const dadId = values["dad-id"] || (demo ? DEMO_DAD_ID : "");
+  // --demo stays in-memory unless --on-db is explicit, so a leftover
+  // DATABASE_URL cannot write fake-family rows into rented Postgres.
+  const usePostgres = Boolean(url) && (!demo || onDb);
 
-  if (!url && !demo) {
+  if (!usePostgres && !demo) {
     return {
       ok: false,
       stdout: "",
@@ -83,16 +89,16 @@ export async function runExportCli(argv = process.argv.slice(2)) {
       exitCode: 2,
     };
   }
-  if (url && !dadId) {
+  if (usePostgres && !dadId) {
     return {
       ok: false,
       stdout: "",
-      stderr: "DATABASE_URL is set; pass --dad-id <uuid> (or --demo for the fake-family id).\n",
+      stderr: "DATABASE_URL is set; pass --dad-id <uuid>.\n",
       exitCode: 2,
     };
   }
 
-  const store = await openStore();
+  const store = await openStore({ databaseUrl: usePostgres ? url : "" });
   try {
     const bff = makeBff(store.vault);
     if (demo) await seedDemo(bff, dadId);

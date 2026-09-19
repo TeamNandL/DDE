@@ -10,7 +10,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { makeBff } from "./bff.js";
-import { openStore } from "./store.js";
+import { databaseUrl, openStore } from "./store.js";
 import { DEMO_DAD_ID, seedDemo } from "./demo.js";
 import { log } from "./logger.js";
 
@@ -202,6 +202,7 @@ export async function main(argv = process.argv.slice(2)) {
     options: {
       http: { type: "boolean", default: false },
       demo: { type: "boolean", default: false },
+      "on-db": { type: "boolean", default: false },
       host: { type: "string" },
       port: { type: "string" },
       help: { type: "boolean", default: false },
@@ -221,7 +222,9 @@ export async function main(argv = process.argv.slice(2)) {
     return { started: false };
   }
 
-  const store = await openStore();
+  const url = databaseUrl();
+  const usePostgres = Boolean(url) && (!values.demo || values["on-db"]);
+  const store = await openStore({ databaseUrl: usePostgres ? url : "" });
   const bff = makeBff(store.vault);
   if (values.demo) {
     await seedDemo(bff, DEMO_DAD_ID);

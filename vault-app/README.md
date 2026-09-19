@@ -103,7 +103,8 @@ Off unless you start it. Product bots call these Phase 1 routes:
 
 ```
 npm run serve -- --http
-npm run serve -- --http --demo          # seeds fake-family Alex Rivera
+npm run serve -- --http --demo          # in-memory fake-family Alex Rivera
+DATABASE_URL=... npm run serve -- --http   # rented Postgres, no demo seed
 ```
 
 Listens on `127.0.0.1:8787` (`PORT` / `HOST` override). Auth is a later
@@ -129,8 +130,11 @@ DATABASE_URL=... npm run export:events -- --dad-id <uuid>
 ```
 
 `--demo` uses the fake family only (FIXED_VENT + a court-safe OFW cold
-sentence and a verified OFW pull). Each XLSX includes a `_generated` sheet
-stating the vault is the source of truth.
+sentence and a verified OFW pull) and **stays in-memory** even if
+`DATABASE_URL` is set, so a leftover env var cannot write demo rows into
+rented Postgres. Pass `--on-db` only if you really mean to seed the demo
+into that database. Each XLSX includes a `_generated` sheet stating the
+vault is the source of truth.
 
 ## Schema
 
