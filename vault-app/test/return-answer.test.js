@@ -131,6 +131,65 @@ test("cold-ask return answer → notes 'Return: cold ask follow-up'", async () =
   }
 });
 
+// RAZOR regression: realistic harm shapes — not just the textbook fixture —
+// must ALL short-circuit the return answer: written:0, event count
+// unchanged, zero answer text in logs. Greeting may still return.
+test("RAZOR return harm short-circuit: realistic harm answers → written:0, no rows, no log text", async () => {
+  const s = await start();
+  try {
+    const { dad_id, token } = await provisionedDad(s.base);
+    await jsonReq(
+      s.base,
+      "PUT",
+      "/vault/state",
+      { dad_id, next_action: "pull the OFW thread" },
+      { token },
+    );
+
+    const HARM_SHAPES = [
+      "It went nowhere. I could kill that woman.",
+      "Next exchange I am bringing my gun.",
+      "She would be better off dead.",
+      "Badly. I just want to die.",
+      "Honestly thinking about ending it all tonight.",
+      "I am going to make her pay for this.",
+      "I will murder him if this keeps up.",
+      "Might do something violent next time I see her.",
+      "I want to hurt Jordan for this.",
+    ];
+
+    for (const answer of HARM_SHAPES) {
+      const before = (await s.vault.listEvents(dad_id)).length;
+      const ret = await jsonReq(s.base, "POST", "/vault/return", { dad_id, answer }, { token });
+      assert.equal(ret.status, 200, answer);
+      assert.equal(ret.data.written, 0, `harm not short-circuited: ${answer}`);
+      assert.match(ret.data.line ?? "", /^Last time:/, "greeting may still return");
+      const after = (await s.vault.listEvents(dad_id)).length;
+      assert.equal(after, before, `event count changed for: ${answer}`);
+    }
+    assert.equal((await s.vault.listEvents(dad_id)).length, 0);
+
+    // Zero retention anywhere: no fragment of any harm answer in logs.
+    const logs = logger.lines().join("\n");
+    for (const frag of ["kill", "gun", "dead", "die", "ending it", "murder", "violent", "hurt", "Jordan"]) {
+      assert.ok(!new RegExp(`\\b${frag}`, "i").test(logs), `log retains harm fragment: ${frag}`);
+    }
+
+    // Guard the other side: ordinary vents about hurt feelings or shifts
+    // are NOT harm — they still write the one claim event.
+    const okAnswers = [
+      "It hurt to hear Sam cry about it.",
+      "We missed the end of her shift again.",
+    ];
+    for (const answer of okAnswers) {
+      const ret = await jsonReq(s.base, "POST", "/vault/return", { dad_id, answer }, { token });
+      assert.equal(ret.data.written, 1, `false discard of ordinary vent: ${answer}`);
+    }
+  } finally {
+    await s.close();
+  }
+});
+
 test("harm answer → written:0, zero rows, zero retention; no answer → no written key", async () => {
   const s = await start();
   try {

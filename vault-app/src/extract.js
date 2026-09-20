@@ -24,11 +24,21 @@ import { piiTotal, stripPii } from "./pii.js";
 // 1. harm_check — first, before anything is parsed or logged.
 // A hit short-circuits the whole call: zero rows, zero log lines, zero
 // retention of the input.
+// Razor return-harm FAIL taught us the original list was too narrow:
+// realistic shapes ("kill that woman", "bringing my gun", "better off
+// dead", "want to die", "murder him") all slipped through and got stored
+// as claims. The rail's cost asymmetry favors discarding — a false
+// discard loses one vent; a false store keeps harm language in the
+// record — so these patterns lean wide on harm verbs, targets, weapon
+// intent, and self-harm phrasings.
 const HARM_PATTERNS = [
-  /\b(kill|hurt|harm|beat|strangle|choke|shoot|stab|attack)\b[^.!?]{0,60}\b(her|him|them|myself|jordan|the kids?)\b/i,
-  /\bmake\s+(her|him|jordan)\s+(pay|suffer|regret)\b/i,
-  /\b(end it all|not want to be here anymore|better off without me)\b/i,
+  /\b(kill|murder|hurt|harm|beat|strangle|choke|shoot|stab|attack)\b[^.!?]{0,60}\b(her|him|them|myself|jordan|the kids?|that (?:woman|man)|some(?:one|body))\b/i,
+  /\bmake\s+(her|him|them|jordan)\s+(pay|suffer|regret)\b/i,
+  /\b(end(?:ing)? it all|not want to be here anymore|better off without me|want to die|wanna die|suicid\w*)\b/i,
   /\b(hurt|kill)ing?\s+(myself|herself|himself)\b/i,
+  /\bbetter off dead\b/i,
+  /\b(bring(?:ing)?|grab(?:bing)?|get(?:ting)?|us(?:e|ing))\s+(?:my|a|the)\s+(gun|knife|weapon|pistol|rifle|bat)\b/i,
+  /\bdo something (violent|drastic)\b/i,
 ];
 
 export function harmCheck(text) {
