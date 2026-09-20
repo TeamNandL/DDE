@@ -63,21 +63,16 @@ test("pack labels are PII-safe blanks: no names, dates, numbers, or case data", 
   assert.ok(SEED_PACKS.kids_facts.length <= 7, "checklist rail: max 7");
 });
 
-test("empty missing + null counters → seed 5 blanks, total 5 / done 0, progress line speaks", async () => {
+test("provision auto-seeds kids_facts: 5 blanks, total 5 / done 0, provision response speaks", async () => {
   const s = await start();
   try {
-    const { dad_id, token } = await provisionedDad(s.base);
-    const seed = await jsonReq(
-      s.base,
-      "POST",
-      "/vault/missing/seed",
-      { dad_id, pack: "kids_facts" },
-      { token },
-    );
-    assert.equal(seed.status, 200);
-    assert.equal(seed.data.written, 1);
-    assert.equal(seed.data.missing_one, "Kids school name");
-    assert.equal(seed.data.progress_line, "0 of 5 this week; still open: Kids school name");
+    const dad_id = randomUUID();
+    const prov = await jsonReq(s.base, "POST", "/vault/provision", { dad_id });
+    assert.equal(prov.status, 200);
+    // Provision response carries the speakables directly.
+    assert.equal(prov.data.missing_one, "Kids school name");
+    assert.equal(prov.data.progress_line, "0 of 5 this week; still open: Kids school name");
+    const token = prov.data.token;
 
     const state = await jsonReq(s.base, "GET", `/vault/state?dad_id=${dad_id}`, null, { token });
     assert.deepEqual(state.data.missing, KIDS_FACTS);
@@ -96,17 +91,27 @@ test("empty missing + null counters → seed 5 blanks, total 5 / done 0, progres
     );
     assert.deepEqual(verified.data, []);
 
-    // Default pack when omitted.
-    const other = await provisionedDad(s.base);
-    const noPack = await jsonReq(
-      s.base,
-      "POST",
-      "/vault/missing/seed",
-      { dad_id: other.dad_id },
-      { token: other.token },
-    );
-    assert.equal(noPack.data.written, 1);
-    assert.equal(noPack.data.missing_one, "Kids school name");
+    // A second explicit seed is a no-op: already seeded, no overwrite.
+    const again = await jsonReq(s.base, "POST", "/vault/missing/seed", { dad_id }, { token });
+    assert.equal(again.data.written, 0);
+    assert.equal(again.data.missing_one, "Kids school name");
+
+    // Cleared checklist → the endpoint re-seeds (counters kept, not both-null).
+    await jsonReq(s.base, "PUT", "/vault/state", { dad_id, missing: [] }, { token });
+    const reseed = await jsonReq(s.base, "POST", "/vault/missing/seed", { dad_id }, { token });
+    assert.equal(reseed.data.written, 1);
+    assert.equal(reseed.data.missing_one, "Kids school name");
+
+    // Both-null counters (pre-auto-seed legacy shape) → seed sets 5/0.
+    const st = s.vault.getState(dad_id);
+    st.missing = [];
+    st.this_week_done = null;
+    st.this_week_total = null;
+    const legacy = await jsonReq(s.base, "POST", "/vault/missing/seed", { dad_id }, { token });
+    assert.equal(legacy.data.written, 1);
+    const after = await jsonReq(s.base, "GET", `/vault/state?dad_id=${dad_id}`, null, { token });
+    assert.equal(after.data.this_week_total, 5);
+    assert.equal(after.data.this_week_done, 0);
   } finally {
     await s.close();
   }
@@ -139,13 +144,13 @@ test("non-empty missing → written 0, no overwrite; reports current first item"
 test("existing counters are never invented over — seed fills missing only", async () => {
   const s = await start();
   try {
-    // Both counters set, empty missing.
+    // Both counters set, checklist cleared → re-seed keeps 2/4.
     const a = await provisionedDad(s.base);
     await jsonReq(
       s.base,
       "PUT",
       "/vault/state",
-      { dad_id: a.dad_id, this_week_done: 2, this_week_total: 4 },
+      { dad_id: a.dad_id, missing: [], this_week_done: 2, this_week_total: 4 },
       { token: a.token },
     );
     const seedA = await jsonReq(s.base, "POST", "/vault/missing/seed", { dad_id: a.dad_id }, { token: a.token });
@@ -156,15 +161,13 @@ test("existing counters are never invented over — seed fills missing only", as
     assert.deepEqual(stateA.data.missing, KIDS_FACTS);
     assert.equal(seedA.data.progress_line, "2 of 4 this week; still open: Kids school name");
 
-    // Only total set (done null) → "both null" not met → counters untouched.
+    // Only total set (done null — legacy shape) → "both null" not met →
+    // counters untouched by the seed.
     const b = await provisionedDad(s.base);
-    await jsonReq(
-      s.base,
-      "PUT",
-      "/vault/state",
-      { dad_id: b.dad_id, this_week_total: 3 },
-      { token: b.token },
-    );
+    const stB = s.vault.getState(b.dad_id);
+    stB.missing = [];
+    stB.this_week_done = null;
+    stB.this_week_total = 3;
     await jsonReq(s.base, "POST", "/vault/missing/seed", { dad_id: b.dad_id }, { token: b.token });
     const stateB = await jsonReq(s.base, "GET", `/vault/state?dad_id=${b.dad_id}`, null, { token: b.token });
     assert.equal(stateB.data.this_week_total, 3);
@@ -226,7 +229,8 @@ test("gates and validation: unknown pack 400; 404/401/403 matrix", async () => {
     const state = await jsonReq(s.base, "GET", `/vault/state?dad_id=${a.dad_id}`, null, {
       token: a.token,
     });
-    assert.deepEqual(state.data.missing, [], "blocked cross-dad seed wrote nothing");
+    // Blocked calls change nothing: still exactly the provision-time seed.
+    assert.deepEqual(state.data.missing, KIDS_FACTS, "blocked cross-dad seed wrote nothing");
   } finally {
     await s.close();
   }

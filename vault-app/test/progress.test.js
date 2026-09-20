@@ -169,21 +169,19 @@ test("PUT /vault/state clamps progress fields; GET state and GET /vault/progress
   }
 });
 
-test("empty missing ok; fresh dad progress → nulls, nothing invented", async () => {
+test("empty missing ok; fresh dad speaks the provision seed; legacy empty dad → nulls", async () => {
   const s = await start();
   const dad_id = randomUUID();
   try {
     const { token } = await provision(s.base, dad_id);
 
+    // Provision auto-seeds kids_facts: fresh dad already has 0-of-5.
     const fresh = await jsonReq(s.base, "GET", `/vault/progress?dad_id=${dad_id}`, null, { token });
     assert.equal(fresh.status, 200);
-    assert.deepEqual(fresh.data, {
-      line: null,
-      missing_one: null,
-      grade: null,
-      progress_line: null,
-    });
+    assert.equal(fresh.data.line, "0 of 5 this week");
+    assert.equal(fresh.data.missing_one, "Kids school name");
 
+    // Empty missing is still a valid state (counters remain).
     const put = await jsonReq(
       s.base,
       "PUT",
@@ -193,10 +191,21 @@ test("empty missing ok; fresh dad progress → nulls, nothing invented", async (
     );
     assert.equal(put.status, 200);
     assert.deepEqual(put.data.missing, []);
+    const cleared = await jsonReq(s.base, "GET", `/vault/progress?dad_id=${dad_id}`, null, { token });
+    assert.equal(cleared.data.missing_one, null);
+    assert.equal(cleared.data.line, "0 of 5 this week");
 
-    const prog = await jsonReq(s.base, "GET", `/vault/progress?dad_id=${dad_id}`, null, { token });
-    assert.equal(prog.data.missing_one, null);
-    assert.equal(prog.data.line, null);
+    // Truly empty (pre-auto-seed legacy) state → all nulls, nothing invented.
+    const st = s.vault.getState(dad_id);
+    st.this_week_done = null;
+    st.this_week_total = null;
+    const legacy = await jsonReq(s.base, "GET", `/vault/progress?dad_id=${dad_id}`, null, { token });
+    assert.deepEqual(legacy.data, {
+      line: null,
+      missing_one: null,
+      grade: null,
+      progress_line: null,
+    });
   } finally {
     await s.close();
   }

@@ -57,13 +57,28 @@ async function provisionedDad(base) {
   return { dad_id, token: prov.data.token };
 }
 
-test("fresh dad → all nulls; nothing invented", async () => {
+test("fresh dad → seeded kids-facts speak; greeting fields stay null (nothing invented)", async () => {
   const s = await start();
   try {
     const { dad_id, token } = await provisionedDad(s.base);
     const entry = await jsonReq(s.base, "GET", `/vault/chip_entry?dad_id=${dad_id}`, null, { token });
     assert.equal(entry.status, 200);
+    // Provision auto-seeds kids_facts (5 blanks, 0 of 5) — but there is
+    // still no Next, so the greeting fields are null, not invented.
     assert.deepEqual(entry.data, {
+      progress_line: "0 of 5 this week; still open: Kids school name",
+      missing_one: "Kids school name",
+      next_action: null,
+      return_line: null,
+    });
+
+    // A truly empty (pre-auto-seed / legacy) dad still gets all nulls.
+    const st = s.vault.getState(dad_id);
+    st.missing = [];
+    st.this_week_done = null;
+    st.this_week_total = null;
+    const legacy = await jsonReq(s.base, "GET", `/vault/chip_entry?dad_id=${dad_id}`, null, { token });
+    assert.deepEqual(legacy.data, {
       progress_line: null,
       missing_one: null,
       next_action: null,

@@ -298,8 +298,13 @@ export function makeBff(vault, opts = {}) {
       return vault.getState(dad_id);
     },
 
-    // POST /vault/provision {dad_id?} -> {dad_id, token}
+    // POST /vault/provision {dad_id?} -> {dad_id, token, missing_one, progress_line}
     // ONLY path that creates state. Returns raw token once; store keeps hash only.
+    // Auto-seeds the kids_facts checklist via the SAME seed helper (no
+    // duplicate pack): a fresh provision has empty missing + null counters,
+    // so the helper applies 5 blanks and total=5/done=0; its no-overwrite
+    // guard keeps any non-empty missing untouched. missing_one +
+    // progress_line come back so Chip can speak immediately.
     async postVaultProvision({ dad_id } = {}) {
       const id = dad_id || randomUUID();
       await vault.provisionState(id);
@@ -309,8 +314,14 @@ export function makeBff(vault, opts = {}) {
         token_hash: hashToken(token),
         created_at: new Date().toISOString(),
       });
-      log("provision", { dad: id });
-      return { dad_id: id, token };
+      const seeded = await this.postMissingSeed({ dad_id: id });
+      log("provision", { dad: id, seeded: seeded.written });
+      return {
+        dad_id: id,
+        token,
+        missing_one: seeded.missing_one,
+        progress_line: seeded.progress_line,
+      };
     },
 
     // PUT /vault/state {dad_id, phase?, this_week?, missing?, next_action?,

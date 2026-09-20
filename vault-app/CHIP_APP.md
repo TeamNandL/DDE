@@ -34,8 +34,18 @@ POST /vault/provision
 Content-Type: application/json
 { "dad_id"?: "<uuid>" }   // omit → server mints uuid
 
-→ 200 { "dad_id": "<uuid>", "token": "dde-stub-<uuid>" }
+→ 200 { "dad_id": "<uuid>", "token": "dde-stub-<uuid>",
+        "missing_one": "Kids school name",
+        "progress_line": "0 of 5 this week; still open: Kids school name" }
 → 409 if that dad_id already provisioned
+```
+
+Provision **auto-seeds the kids_facts checklist** (same pack as
+`/vault/missing/seed`: 5 blanks, total 5 / done 0) so Chip can speak
+`progress_line` and ask about `missing_one` immediately. Non-empty
+missing is never overwritten.
+
+```
 ```
 
 No prior Bearer required.

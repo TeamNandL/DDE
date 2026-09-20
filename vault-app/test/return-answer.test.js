@@ -71,7 +71,8 @@ test("answer → ONE claim event 'Return: how'd it go'; PII stripped; response k
     assert.equal(ret.status, 200);
     assert.equal(ret.data.written, 1);
     assert.equal(ret.data.line, "Last time: pull the OFW thread. How'd it go?");
-    assert.equal(ret.data.progress_line, "1 of 3 this week");
+    // Provision auto-seeded the checklist, so the first blank rides along.
+    assert.equal(ret.data.progress_line, "1 of 3 this week; still open: Kids school name");
 
     const events = await s.vault.listEvents(dad_id);
     assert.equal(events.length, 1);

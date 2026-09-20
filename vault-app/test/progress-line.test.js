@@ -130,23 +130,36 @@ test("PUT counters → GET /vault/progress progress_line; PII in missing strippe
   }
 });
 
-test("empty progress → progress_line null everywhere; counters without missing → bare N of M", async () => {
+test("fresh dad speaks the seed; truly empty progress → null; bare counters → N of M", async () => {
   const s = await start();
   const dad_id = randomUUID();
   try {
     const prov = await jsonReq(s.base, "POST", "/vault/provision", { dad_id });
     const token = prov.data.token;
 
+    // Provision auto-seeds kids_facts → the line speaks immediately.
+    const seeded = "0 of 5 this week; still open: Kids school name";
     const fresh = await jsonReq(s.base, "GET", `/vault/progress?dad_id=${dad_id}`, null, { token });
-    assert.equal(fresh.data.progress_line, null);
+    assert.equal(fresh.data.progress_line, seeded);
     const freshRet = await jsonReq(s.base, "POST", "/vault/return", { dad_id }, { token });
-    assert.equal(freshRet.data.progress_line, null);
+    assert.equal(freshRet.data.progress_line, seeded);
 
+    // Truly empty (pre-auto-seed legacy) state → null everywhere.
+    const st = s.vault.getState(dad_id);
+    st.missing = [];
+    st.this_week_done = null;
+    st.this_week_total = null;
+    const legacy = await jsonReq(s.base, "GET", `/vault/progress?dad_id=${dad_id}`, null, { token });
+    assert.equal(legacy.data.progress_line, null);
+    const legacyRet = await jsonReq(s.base, "POST", "/vault/return", { dad_id }, { token });
+    assert.equal(legacyRet.data.progress_line, null);
+
+    // Counters without missing → bare N of M.
     await jsonReq(
       s.base,
       "PUT",
       "/vault/state",
-      { dad_id, this_week_done: 0, this_week_total: 3 },
+      { dad_id, missing: [], this_week_done: 0, this_week_total: 3 },
       { token },
     );
     const prog = await jsonReq(s.base, "GET", `/vault/progress?dad_id=${dad_id}`, null, { token });

@@ -53,6 +53,8 @@ test("empty missing → {written:0, missing_one:null, progress_line:null} — no
   const s = await start();
   try {
     const { dad_id, token } = await provisionedDad(s.base);
+    // Provision auto-seeds kids_facts; clear it to test the empty path.
+    await jsonReq(s.base, "PUT", "/vault/state", { dad_id, missing: [] }, { token });
     const fill = await jsonReq(
       s.base,
       "POST",
@@ -156,13 +158,12 @@ test("done bump edges: at total → no bump; total unset → no bump", async () 
     assert.equal(stateA.data.this_week_done, 3, "done never exceeds total");
 
     const b = await provisionedDad(s.base);
-    await jsonReq(
-      s.base,
-      "PUT",
-      "/vault/state",
-      { dad_id: b.dad_id, missing: ["x1"] },
-      { token: b.token },
-    );
+    // "Total unset" is the pre-auto-seed legacy shape now — build it
+    // directly (provision seeds 5/0, and PUT cannot null counters).
+    const stB0 = s.vault.getState(b.dad_id);
+    stB0.missing = ["x1"];
+    stB0.this_week_done = null;
+    stB0.this_week_total = null;
     const fillB = await jsonReq(
       s.base,
       "POST",
