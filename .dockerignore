@@ -1,0 +1,18 @@
+# Docker context is the repository root:
+#   docker build -f vault-app/Dockerfile .
+
+.git
+.github
+**/.env
+**/.env.local
+**/.env.*.local
+!**/.env.example
+**/node_modules
+**/test-output
+**/exports
+**/.DS_Store
+**/*.log
+
+# Runtime image does not need tests or the RLS plan (RLS stays off).
+vault-app/test
+vault/002_rls_plan.sql

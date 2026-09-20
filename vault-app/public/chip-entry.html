@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DDE Chip — vault entry</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 36rem; margin: 1.5rem auto; padding: 0 1rem; line-height: 1.4; }
+    label { display: block; font-size: 0.85rem; margin-top: 0.75rem; }
+    input, textarea, button { width: 100%; box-sizing: border-box; margin-top: 0.25rem; padding: 0.4rem; font: inherit; }
+    textarea { min-height: 6rem; }
+    button { margin-top: 0.75rem; cursor: pointer; }
+    .row { display: flex; gap: 0.5rem; }
+    .row > * { flex: 1; }
+    #status { margin-top: 1rem; padding: 0.75rem; background: #f4f4f4; white-space: pre-wrap; word-break: break-word; }
+    #err { color: #a00; margin-top: 0.5rem; }
+    h1 { font-size: 1.15rem; margin: 0 0 0.5rem; }
+    .hint { color: #555; font-size: 0.85rem; }
+    .next { font-weight: 600; font-size: 1.05rem; margin-top: 0.5rem; }
+  </style>
+</head>
+<body>
+  <h1>Chip vault entry</h1>
+  <p class="hint">Uses Bearer already issued by <code>POST /vault/provision</code>. Token only via URL hash (<code>#dad_id=…&amp;token=…</code>) — never query string. No extra login.</p>
+
+  <div id="creds">
+    <label>dad_id <input id="dad_id" autocomplete="off" spellcheck="false" /></label>
+    <label>token <input id="token" autocomplete="off" spellcheck="false" /></label>
+    <div class="row">
+      <button type="button" id="btn_load">Load state</button>
+      <button type="button" id="btn_clear">Clear pasted</button>
+    </div>
+  </div>
+
+  <div id="panel" hidden>
+    <p><strong>Phase:</strong> <span id="phase">—</span></p>
+    <p><strong>Missing:</strong></p>
+    <ul id="missing"></ul>
+    <p class="next">Next: <span id="next">—</span></p>
+    <label>Vent / intake<textarea id="text" placeholder="One pain → one Next"></textarea></label>
+    <button type="button" id="btn_send">Send intake</button>
+  </div>
+
+  <p id="err" hidden></p>
+  <pre id="status" hidden></pre>
+
+  <script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const BFF = ""; // same origin
+
+  /** Hash-only: #dad_id=…&token=… — query ?token= is ignored/rejected. */
+  function parseHashCreds() {
+    let hash = location.hash || "";
+    if (hash.startsWith("#")) hash = hash.slice(1);
+    const out = { dad_id: "", token: "" };
+    if (!hash || !hash.includes("=")) return out;
+    const h = new URLSearchParams(hash);
+    out.dad_id = (h.get("dad_id") || "").trim();
+    out.token = (h.get("token") || "").trim();
+    return out;
+  }
+
+  function queryHasToken() {
+    try {
+      return new URLSearchParams(location.search).has("token");
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function showErr(msg) {
+    const el = $("err");
+    if (!msg) { el.hidden = true; el.textContent = ""; return; }
+    el.hidden = false;
+    el.textContent = msg;
+  }
+
+  function showRaw(obj) {
+    const el = $("status");
+    el.hidden = false;
+    // Never echo token into the status pane
+    if (obj && typeof obj === "object") {
+      const copy = JSON.parse(JSON.stringify(obj));
+      if (copy.token) copy.token = "[redacted]";
+      el.textContent = JSON.stringify(copy, null, 2);
+      return;
+    }
+    el.textContent = typeof obj === "string" ? obj : JSON.stringify(obj, null, 2);
+  }
+
+  function getCreds() {
+    return {
+      dad_id: ($("dad_id").value || "").trim(),
+      token: ($("token").value || "").trim(),
+    };
+  }
+
+  function clearTokenFromHistory() {
+    try {
+      const u = new URL(location.href);
+      u.searchParams.delete("token");
+      const q = u.searchParams.toString();
+      // Drop hash (may hold secrets) and any ?token= leftover
+      history.replaceState(null, "", u.pathname + (q ? "?" + q : ""));
+    } catch (_) {}
+  }
+
+  function renderState(state) {
+    $("panel").hidden = false;
+    $("phase").textContent = state.phase ?? "—";
+    const ul = $("missing");
+    ul.innerHTML = "";
+    const missing = Array.isArray(state.missing) ? state.missing : [];
+    if (!missing.length) {
+      const li = document.createElement("li");
+      li.textContent = "(none)";
+      ul.appendChild(li);
+    } else {
+      for (const m of missing) {
+        const li = document.createElement("li");
+        li.textContent = typeof m === "string" ? m : JSON.stringify(m);
+        ul.appendChild(li);
+      }
+    }
+    $("next").textContent = state.next_action || "(none yet — vent once)";
+    showRaw(state);
+  }
+
+  async function loadState() {
+    showErr("");
+    const { dad_id, token } = getCreds();
+    if (!dad_id || !token) {
+      showErr("Need dad_id + token (hash #dad_id=…&token=… or paste once).");
+      return;
+    }
+    const res = await fetch(BFF + "/vault/state?dad_id=" + encodeURIComponent(dad_id), {
+      headers: { Authorization: "Bearer " + token },
+    });
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); } catch { data = { raw: text }; }
+    if (!res.ok) {
+      showErr((data && data.error) || ("HTTP " + res.status));
+      showRaw(data);
+      return;
+    }
+    renderState(data);
+  }
+
+  async function sendIntake() {
+    showErr("");
+    const { dad_id, token } = getCreds();
+    const text = ($("text").value || "").trim();
+    if (!text) { showErr("Type something to vent."); return; }
+    const res = await fetch(BFF + "/vault/intake", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        Authorization: "Bearer " + token,
+      },
+      body: JSON.stringify({ dad_id, text }),
+    });
+    const bodyText = await res.text();
+    let data;
+    try { data = JSON.parse(bodyText); } catch { data = { raw: bodyText }; }
+    if (!res.ok) {
+      showErr((data && data.error) || ("HTTP " + res.status));
+      showRaw(data);
+      return;
+    }
+    $("text").value = "";
+    showRaw({ intake: data });
+    await loadState();
+  }
+
+  // Boot: hash-only for token. Reject ?token= query (do not use it).
+  const rejectedQueryToken = queryHasToken();
+  const p = parseHashCreds();
+  if (p.dad_id) $("dad_id").value = p.dad_id;
+  if (p.token) $("token").value = p.token;
+
+  if (rejectedQueryToken) {
+    showErr("Token must be in the URL hash (#dad_id=…&token=…), not the query string. Query token was ignored.");
+  }
+
+  if (p.dad_id || p.token || rejectedQueryToken) {
+    clearTokenFromHistory();
+  }
+
+  $("btn_load").addEventListener("click", () => loadState().catch((e) => showErr(String(e))));
+  $("btn_send").addEventListener("click", () => sendIntake().catch((e) => showErr(String(e))));
+  $("btn_clear").addEventListener("click", () => {
+    $("dad_id").value = "";
+    $("token").value = "";
+    $("panel").hidden = true;
+    showErr("");
+    $("status").hidden = true;
+  });
+
+  // Hash creds still work even if a query token was present (query ignored).
+  if (p.dad_id && p.token) {
+    loadState().catch((e) => showErr(String(e)));
+  }
+})();
+  </script>
+</body>
+</html>

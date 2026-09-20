@@ -18,6 +18,7 @@
 // test comes after the vault holds — not Phase 1.
 
 import { log } from "./logger.js";
+import { piiTotal, stripPii } from "./pii.js";
 
 // ---------------------------------------------------------------------------
 // 1. harm_check — first, before anything is parsed or logged.
@@ -62,17 +63,6 @@ function detectCountClaim(text) {
   return COUNT_CLAIM.test(text);
 }
 
-// The claim sentence itself carries the number, so the whole sentence is
-// redacted from anything stored — the chase item replaces it.
-function redactCountClaim(text) {
-  const sentences = text.match(/[^.!?]+[.!?]*/g) ?? [text];
-  return sentences
-    .filter((s) => !COUNT_CLAIM.test(s))
-    .map((s) => s.trim())
-    .join(" ")
-    .trim();
-}
-
 // ---------------------------------------------------------------------------
 // 3. extract_fields — deterministic rules sized to the fixed vent.
 const KNOWN_KIDS = ["Sam", "Taylor"]; // fake family only (§2)
@@ -104,14 +94,18 @@ export function extractFields(text, { referenceDate }) {
   const mentionsExchange = /\bexchange\b/.test(lower);
   const late =
     /\b(late|didn'?t show(?: up)?\s+until|not\s+until)\b/.test(lower);
+  // Cancelled/denied visit phrasing is a claim event even when the vent
+  // never says "visit" or "exchange" ("Jordan cancelled Tuesday again").
   const denied =
-    /\b(denied|refused|wouldn'?t let|didn'?t let|no[- ]showed|never showed)\b/.test(lower);
+    /\b(denied|refused|wouldn'?t let|didn'?t let|no[- ]showed|never showed|cancel(?:l?ed|s|l?ing)?|called off)\b/.test(
+      lower,
+    );
 
   let event_type = null;
-  if (mentionsExchange && denied) event_type = "denied_visit";
-  else if (mentionsExchange && late) event_type = "late_exchange";
-  else if (mentionsExchange) event_type = "exchange";
+  // Late wins when both apply so "cancelled and late" is late_exchange.
+  if (late && (mentionsExchange || denied)) event_type = "late_exchange";
   else if (denied) event_type = "denied_visit";
+  else if (mentionsExchange) event_type = "exchange";
   else if (/\bvisit\b/.test(lower)) event_type = "visit";
   else if (/\b(call|phone)\b/.test(lower)) event_type = "call";
 
@@ -172,8 +166,9 @@ function monthName(referenceDate) {
 }
 
 // ---------------------------------------------------------------------------
-// The pipeline.
-export function extract(vault, dadId, text, opts = {}) {
+// The pipeline. Async so the same code runs against the in-memory vault
+// (sync methods) and the Postgres-backed SqlVault (async methods).
+export async function extract(vault, dadId, text, opts = {}) {
   const referenceDate = opts.referenceDate ?? new Date();
 
   // 1. harm check FIRST. Nothing parsed, nothing logged, nothing retained.
@@ -181,27 +176,42 @@ export function extract(vault, dadId, text, opts = {}) {
     return { written: 0, chase: [] };
   }
 
-  // 2. venom out. 6a. count claims out of anything stored.
-  const cold = stripVenom(text);
-  const storable = redactCountClaim(cold); // raw_quote = original minus harm/venom (count-claim sentence redacted with it)
+  // 2. venom out. raw_quote = original text minus harm/venom (§4) — the
+  // dad's own words survive on the claim pipe, count claims included. The
+  // count is never written as a structured field or a verified row; the
+  // chase item below is what the record keeps of it.
+  //
+  // 2b. PII out (statement → notice slice): phones, emails, tax ids,
+  // numbered street addresses, account/routing numbers, kid school ids are
+  // redacted BEFORE anything is stored, so raw_quote/notes — and therefore
+  // state/search/notice — never carry raw PII. Only redaction counts may be
+  // logged; the stripped values are gone. PII strip runs BEFORE venom strip:
+  // venom's sentence split breaks emails ("dad@example. com") and would let
+  // them slip past the redaction.
+  const { text: piiFree, counts: piiCounts } = stripPii(text);
+  const cold = stripVenom(piiFree);
 
-  // 3. fields from the venom-free text.
-  const fields = extractFields(storable, { referenceDate });
+  // 3. fields from the venom-free text. notes/location/kids/times are
+  // constructed observable fields — a count claim never lands in them.
+  const fields = extractFields(cold, { referenceDate });
 
   // 4 + 5. tag claim, one row per event.
-  const rows = fields.map((f) =>
-    vault.insertEvent(dadId, {
-      ...f,
-      pipe: "claim", // Intake writes claim ONLY (§3 events rule)
-      raw_quote: storable,
-    }),
-  );
+  const rows = [];
+  for (const f of fields) {
+    rows.push(
+      await vault.insertEvent(dadId, {
+        ...f,
+        pipe: "claim", // Intake writes claim ONLY (§3 events rule)
+        raw_quote: cold,
+      }),
+    );
+  }
 
   // 6. claim chase — the verify item, never the number.
   const chase = [];
   if (detectCountClaim(text)) {
     const item = `verify count in OFW record for ${monthName(referenceDate)}`;
-    vault.appendMissing(dadId, item);
+    await vault.appendMissing(dadId, item);
     chase.push(item);
   }
 
@@ -210,7 +220,10 @@ export function extract(vault, dadId, text, opts = {}) {
     written: rows.length,
     refs: rows.map((r) => r.id),
     chase: chase.length,
+    pii: piiTotal(piiCounts),
   });
 
-  return { written: rows.length, chase };
+  // event_ids is internal (BFF notice hook) — the HTTP intake response
+  // stays { written, chase } unless make_notice is set.
+  return { written: rows.length, chase, event_ids: rows.map((r) => r.id) };
 }

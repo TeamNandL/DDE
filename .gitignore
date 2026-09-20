@@ -1,2 +1,7 @@
 node_modules/
 vault-app/test-output/
+vault-app/exports/
+.env
+.env.local
+.env.*.local
+.dde-tokens.json

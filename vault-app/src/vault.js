@@ -12,6 +12,8 @@
 
 import { randomUUID } from "node:crypto";
 import { log } from "./logger.js";
+import { buildNoticeText } from "./pii.js";
+import { makeSnippet, textIncludes } from "./search.js";
 
 const PIPES = new Set(["claim", "verified"]);
 
@@ -84,6 +86,8 @@ export class Vault {
       location: row.location ?? null,
       kids: row.kids ?? [],
       notes: row.notes ?? null,
+      noticed_at: null,
+      noticed_text: null,
     };
     this.events.push(rec);
     log("event.insert", { table: "events", id: rec.id, dad: rec.dad_id, pipe: rec.pipe });
@@ -171,13 +175,43 @@ export class Vault {
     return { row: rec, forced_claim: forced };
   }
 
+  // statement → notice: stamp noticed_at/noticed_text on one of the dad's
+  // events (latest by created_at when eventId is null). Pipe is untouched —
+  // a noticed row stays 'claim' until verified, so verified_export /
+  // affidavit_support never pick it up on notice alone.
+  noticeEvent(dadId, eventId = null) {
+    const mine = this.events.filter((e) => e.dad_id === dadId);
+    const event = eventId
+      ? (mine.find((e) => e.id === eventId) ?? null)
+      : (mine
+          .slice()
+          .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)))
+          .pop() ?? null);
+    if (!event) {
+      const err = new Error("unknown event");
+      err.status = 404;
+      throw err;
+    }
+    event.noticed_at = new Date().toISOString();
+    event.noticed_text = buildNoticeText(event);
+    log("event.notice", { table: "events", id: event.id, dad: dadId, pipe: event.pipe });
+    return {
+      event_id: event.id,
+      noticed_at: event.noticed_at,
+      noticed_text: event.noticed_text,
+      pipe: event.pipe,
+    };
+  }
+
   #resolvesVerified(dadId, ref) {
     const all = [...this.events, ...this.communications, ...this.documents];
     const hit = all.find((r) => r.dad_id === dadId && r.id === ref);
     return Boolean(hit && hit.pipe === "verified");
   }
 
-  // state — one row per dad_id, upserted. Front Door and Edge read/write.
+  // state — one row per dad_id.
+  // upsertState may create (used ONLY by provisionState).
+  // updateState / appendMissing never create — missing dad → 404.
   upsertState(dadId, patch) {
     const existing = this.state.get(dadId);
     const rec = {
@@ -198,24 +232,63 @@ export class Vault {
     return rec;
   }
 
+  // PUT /vault/state — update-only. Does not create.
+  updateState(dadId, patch) {
+    const existing = this.state.get(dadId);
+    if (!existing) {
+      const err = new Error("unknown dad");
+      err.status = 404;
+      throw err;
+    }
+    return this.upsertState(dadId, patch);
+  }
+
   getState(dadId) {
     return this.state.get(dadId) ?? null;
   }
 
+  // POST /vault/provision — insert-only. Never used by GET /vault/state.
+  provisionState(dadId) {
+    if (this.state.has(dadId)) {
+      const err = new Error("dad already provisioned");
+      err.status = 409;
+      throw err;
+    }
+    return this.upsertState(dadId, {
+      phase: "intake",
+      missing: [],
+      next_action: null,
+    });
+  }
+
+  // Read helpers used by spreadsheet views (same names as SqlVault).
+  async listEvents(dadId) {
+    return this.events
+      .filter((e) => e.dad_id === dadId)
+      .slice()
+      .sort((a, b) => String(a.occurred_at).localeCompare(String(b.occurred_at)));
+  }
+
+  // Claim chase — requires provisioned state. Never silent-creates.
   appendMissing(dadId, item) {
     const existing = this.getState(dadId);
-    const missing = [...(existing?.missing ?? [])];
+    if (!existing) {
+      const err = new Error("unknown dad");
+      err.status = 404;
+      throw err;
+    }
+    const missing = [...(existing.missing ?? [])];
     if (!missing.includes(item)) missing.push(item);
     // Edge needs exactly one next_action; the chase item becomes it when
     // nothing else is queued.
-    const next_action = existing?.next_action ?? item;
-    return this.upsertState(dadId, { missing, next_action });
+    const next_action = existing.next_action ?? item;
+    return this.updateState(dadId, { missing, next_action });
   }
 
   // verified_export view — union of all tables where pipe='verified'.
   // The ONLY thing Reporting or any attorney helper may read.
   verifiedExport(dadId) {
-    const tag = (table) => (r) => ({ table, ...r });
+    const tag = (source_table) => (r) => ({ source_table, ...r });
     return [
       ...this.events.map(tag("events")),
       ...this.communications.map(tag("communications")),
@@ -231,6 +304,153 @@ export class Vault {
       documents: this.documents.filter((r) => r.dad_id === dadId && r.pipe === "verified"),
       events: this.events.filter((r) => r.dad_id === dadId && r.pipe === "verified"),
     };
+  }
+
+
+  /**
+   * Memory-store search fallback: case-insensitive substring (not Postgres FTS).
+   * Always filters by dad_id. mode is always "substring".
+   * Documented: no GIN/tsvector on memory path.
+   */
+  search(opts) {
+    const dadId = opts.dad_id;
+    const q = opts.q || "";
+    const pipe = opts.pipe || null;
+    const type = opts.type || "all";
+    const from = opts.from ? new Date(opts.from).getTime() : null;
+    const to = opts.to ? new Date(opts.to).getTime() : null;
+    const limit = opts.limit || 50;
+
+    const inRange = (iso) => {
+      if (!iso && (from != null || to != null)) return false;
+      if (!iso) return true;
+      const t = new Date(iso).getTime();
+      if (Number.isNaN(t)) return false;
+      if (from != null && t < from) return false;
+      if (to != null && t > to) return false;
+      return true;
+    };
+
+    const hits = [];
+
+    const want = (t) => type === "all" || type === t;
+
+    if (want("events")) {
+      for (const e of this.events) {
+        if (e.dad_id !== dadId) continue;
+        if (pipe && e.pipe !== pipe) continue;
+        if (!inRange(e.occurred_at)) continue;
+        const blob = `${e.notes ?? ""} ${e.raw_quote ?? ""}`;
+        if (!textIncludes(blob, q)) continue;
+        hits.push({
+          id: e.id,
+          dad_id: e.dad_id,
+          type: "events",
+          pipe: e.pipe,
+          snippet: makeSnippet(blob, q),
+          rank: q ? 1 : 0,
+          ts: e.occurred_at,
+        });
+      }
+    }
+
+    if (want("communications")) {
+      for (const c of this.communications) {
+        if (c.dad_id !== dadId) continue;
+        if (pipe && c.pipe !== pipe) continue;
+        const ts = c.sent_at ?? c.created_at;
+        if (!inRange(ts)) continue;
+        const blob = `${c.body_cold ?? ""} ${c.raw_quote ?? ""}`;
+        if (!textIncludes(blob, q)) continue;
+        hits.push({
+          id: c.id,
+          dad_id: c.dad_id,
+          type: "communications",
+          pipe: c.pipe,
+          snippet: makeSnippet(blob, q),
+          rank: q ? 1 : 0,
+          ts,
+        });
+      }
+    }
+
+    if (want("documents")) {
+      for (const d of this.documents) {
+        if (d.dad_id !== dadId) continue;
+        if (pipe && d.pipe !== pipe) continue;
+        if (!inRange(d.created_at)) continue;
+        const extracted =
+          d.extracted == null
+            ? ""
+            : typeof d.extracted === "string"
+              ? d.extracted
+              : JSON.stringify(d.extracted);
+        const blob = `${extracted} ${d.raw_quote ?? ""}`;
+        if (!textIncludes(blob, q)) continue;
+        hits.push({
+          id: d.id,
+          dad_id: d.dad_id,
+          type: "documents",
+          pipe: d.pipe,
+          snippet: makeSnippet(blob, q),
+          rank: q ? 1 : 0,
+          ts: d.created_at,
+        });
+      }
+    }
+
+    if (want("state")) {
+      for (const s of this.state.values()) {
+        if (s.dad_id !== dadId) continue;
+        if (pipe && s.pipe !== pipe) continue;
+        if (!inRange(s.updated_at)) continue;
+        const blob = `${s.this_week ?? ""} ${(s.missing ?? []).join(" ")} ${s.next_action ?? ""}`;
+        if (!textIncludes(blob, q)) continue;
+        hits.push({
+          id: s.id,
+          dad_id: s.dad_id,
+          type: "state",
+          pipe: s.pipe,
+          snippet: makeSnippet(blob, q),
+          rank: q ? 1 : 0,
+          ts: s.updated_at,
+        });
+      }
+    }
+
+    if (want("month_summary")) {
+      for (const m of this.month_summary) {
+        if (m.dad_id !== dadId) continue;
+        if (pipe && m.pipe !== pipe) continue;
+        if (!inRange(m.created_at)) continue;
+        const blob = `${m.summary_text ?? ""} ${(m.highlights ?? []).join(" ")}`;
+        if (!textIncludes(blob, q)) continue;
+        hits.push({
+          id: m.id,
+          dad_id: m.dad_id,
+          type: "month_summary",
+          pipe: m.pipe,
+          snippet: makeSnippet(blob, q),
+          rank: q ? 1 : 0,
+          ts: m.created_at,
+        });
+      }
+    }
+
+    hits.sort((a, b) => {
+      if (b.rank !== a.rank) return b.rank - a.rank;
+      return String(b.ts || "").localeCompare(String(a.ts || ""));
+    });
+
+    const out = hits.slice(0, limit);
+    log("search.substring", {
+      dad: dadId,
+      hits: out.length,
+      type,
+      pipe: pipe || "any",
+      q_len: q.length,
+    });
+    return { mode: "substring", hits: out };
   }
 
   // Test helper: every stored row across every table (state included).

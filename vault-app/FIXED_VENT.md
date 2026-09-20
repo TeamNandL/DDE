@@ -23,6 +23,8 @@ Expected extraction (claim pipe):
   occurred 6:45pm, location "Maple Street parking lot", kids Sam + Taylor
 - venom sentence ("on purpose … spiteful … destroying …") dropped entirely —
   stored nowhere, including `raw_quote`
-- count claim ("third time this month") never stored as a number anywhere;
-  instead `state.missing` gains: `verify count in OFW record for September`
+- count claim ("third time this month") stays in the claim row's
+  `raw_quote` (the dad's own words, §4) but is never written as a
+  structured field or verified row; instead `state.missing` gains:
+  `verify count in OFW record for September`
 - verified export from this session: zero rows
