@@ -109,6 +109,41 @@ const MONTH_BY_PREFIX = {
 };
 
 /**
+ * "on 9/12", "for October 3[rd][, 2026]" -> "YYYY-MM-DD" | null.
+ * Scheduling/refusal claims (Sweeper NOTICE_POST_GAPS) name the affected
+ * date; a FUTURE date is legitimate here — a refused upcoming weekend —
+ * so unlike "since" there is no past-guard. Bare month+day takes the
+ * reference year.
+ */
+export function parseMentionedDate(text, referenceDate) {
+  const ref = new Date(referenceDate);
+  let month = null;
+  let day = null;
+  let year = null;
+
+  let m =
+    /\b(?:on|for)\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s+(\d{4}))?/i.exec(
+      text,
+    );
+  if (m) {
+    month = MONTH_BY_PREFIX[m[1].toLowerCase()];
+    day = Number(m[2]);
+    year = m[3] ? Number(m[3]) : null;
+  } else {
+    m = /\b(?:on|for)\s+(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/i.exec(text);
+    if (m) {
+      month = Number(m[1]);
+      day = Number(m[2]);
+      year = m[3] ? (m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3])) : null;
+    }
+  }
+
+  if (!month || !day || month > 12 || day > 31) return null;
+  if (year === null) year = ref.getFullYear();
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+/**
  * "since April 19[, 2026]" / "since 4/19[/2026]" -> "YYYY-MM-DD" | null.
  * A bare month+day takes the reference year, stepping back one year when
  * that lands in the future — "since April 19" said in February means last
@@ -154,8 +189,11 @@ export function extractFields(text, { referenceDate }) {
     /\b(late|didn'?t show(?: up)?\s+until|not\s+until)\b/.test(lower);
   // Cancelled/denied visit phrasing is a claim event even when the vent
   // never says "visit" or "exchange" ("Jordan cancelled Tuesday again").
+  // Sweeper NOTICE_POST_GAPS: OFW-style scheduling refusals count too —
+  // declined, won't agree/let/allow/confirm/respond, blocked, withheld,
+  // keeping/kept the kids, can't come/see, not letting/allowing.
   const denied =
-    /\b(denied|refused|wouldn'?t let|didn'?t let|no[- ]showed|never showed|cancel(?:l?ed|s|l?ing)?|called off)\b/.test(
+    /\b(denied|refus\w*|declin\w*|wouldn'?t let|didn'?t let|no[- ]showed|never showed|cancel(?:l?ed|s|l?ing)?|called off|won'?t\s+(?:agree|allow|let|confirm|respond)|blocked|withheld|withholding|keeping the kids|kept the kids|can'?t\s+(?:come|see)|not\s+(?:letting|allowing))\b/.test(
       lower,
     );
 
@@ -168,6 +206,15 @@ export function extractFields(text, { referenceDate }) {
   // Guard: PII redaction tokens ("[phone]", "[email]") must never read as
   // incident keywords — "call me at [phone]" is not a call event.
   else if (/(?<!\[)\b(call|phone)\b(?!\])/.test(lower)) event_type = "call";
+
+  // Schedule-change arm (Sweeper): "moved the pickup", "switched the
+  // weekend", "rescheduled the exchange" — a dated scheduling claim with
+  // no refusal verb. Recorded as 'other' with an observable note.
+  const scheduleChange =
+    !event_type &&
+    /\b(moved|changed|switched|rescheduled|pushed|swapped)\b/.test(lower) &&
+    /\b(pick-?up|drop-?off|exchange|schedule|weekend|visit|parenting time)\b/.test(lower);
+  if (scheduleChange) event_type = "other";
 
   if (!event_type) {
     // No incident keyword: try the emotion-notice arm before giving up.
@@ -207,9 +254,16 @@ export function extractFields(text, { referenceDate }) {
   const actualClock = actualMatch ? parseClockTime(actualMatch[1]) : null;
 
   const scheduled_at = scheduledClock ? atTime(referenceDate, scheduledClock) : null;
+  // Dated claim ("on 9/12", "for October 3"): with no clock time in the
+  // vent, the named date is the event's date, not the day of the venting.
+  const mentionedDate =
+    !scheduledClock && !actualClock ? parseMentionedDate(text, referenceDate) : null;
   const occurred_at = actualClock
     ? atTime(referenceDate, actualClock)
-    : scheduled_at ?? new Date(referenceDate).toISOString();
+    : scheduled_at ??
+      (mentionedDate
+        ? `${mentionedDate}T12:00:00.000Z`
+        : new Date(referenceDate).toISOString());
 
   const kids = KNOWN_KIDS.filter((k) => new RegExp(`\\b${k}\\b`).test(text));
 
@@ -231,6 +285,8 @@ export function extractFields(text, { referenceDate }) {
     );
   }
   if (kids.length) noteParts.push(`Children present: ${kids.join(", ")}.`);
+  if (scheduleChange) noteParts.push("Schedule change reported.");
+  if (mentionedDate) noteParts.push(`Reported date: ${mentionedDate}.`);
 
   events.push({
     event_type,
