@@ -22,6 +22,11 @@ No real case data. No secrets in git.
   tax ids, numbered street addresses, account/routing numbers, kid school
   ids are redacted before anything is stored — state/search/notice never
   carry raw PII, and the stripped values never reach logs (counts only)
+- Emotion-notice arm: a pure pain + date vent ("miss the kids… since April
+  19 limited time") with no incident keyword still writes one claim event
+  (`event_type='other'`) whose notes carry the cold facts (limited time
+  since DATE, empty-house wait) — so notice always has a sentence; plain
+  text without pain markers still writes nothing
 - Notice: `POST /vault/notice` (or intake `make_notice=true`) produces a
   cold, court-safe, PII-free `noticed_text` from a claim event and stamps
   `noticed_at` — the row **stays `claim` until verified**, so Exhibit

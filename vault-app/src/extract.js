@@ -87,6 +87,64 @@ function atTime(referenceDate, clock) {
   return d.toISOString();
 }
 
+// ---------------------------------------------------------------------------
+// Emotion-notice arm (live-vent gap): pure pain + date vents carry facts too.
+// "I miss the kids… since April 19 limited time" has no incident keyword,
+// but "limited contact since <date>" and "waiting in an empty house" are
+// recordable parent statements. Pain markers gate the arm so ordinary text
+// still extracts nothing.
+const PAIN_PATTERNS = [
+  /\bmiss(?:ing)?\s+(?:the\s+kids?|them|him|her|my\s+(?:kids?|children|son|daughter)|Sam|Taylor)\b/i,
+  /\blimited\s+(?:time|contact|visits?|visitation)\b/i,
+  /\b(?:haven'?t|have\s+not|barely|hardly)\s+(?:seen|had)\b/i,
+  /\bno\s+(?:time|contact|visits?)\s+with\b/i,
+  /\b(?:house|home)\s+(?:is|feels)\s+(?:so\s+)?(?:empty|quiet)\b/i,
+  /\bempty\s+house\b/i,
+  /\bwaiting\s+(?:at\s+home|around|for\s+(?:them|the\s+kids?))\b/i,
+];
+
+const MONTH_BY_PREFIX = {
+  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+  jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+};
+
+/**
+ * "since April 19[, 2026]" / "since 4/19[/2026]" -> "YYYY-MM-DD" | null.
+ * A bare month+day takes the reference year, stepping back one year when
+ * that lands in the future — "since April 19" said in February means last
+ * April, not the next one.
+ */
+export function parseSinceDate(text, referenceDate) {
+  const ref = new Date(referenceDate);
+  let month = null;
+  let day = null;
+  let year = null;
+
+  let m =
+    /\bsince\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s+(\d{4}))?/i.exec(
+      text,
+    );
+  if (m) {
+    month = MONTH_BY_PREFIX[m[1].toLowerCase()];
+    day = Number(m[2]);
+    year = m[3] ? Number(m[3]) : null;
+  } else {
+    m = /\bsince\s+(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/i.exec(text);
+    if (m) {
+      month = Number(m[1]);
+      day = Number(m[2]);
+      year = m[3] ? (m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3])) : null;
+    }
+  }
+
+  if (!month || !day || month > 12 || day > 31) return null;
+  if (year === null) {
+    year = ref.getFullYear();
+    if (Date.UTC(year, month - 1, day) > ref.getTime()) year -= 1;
+  }
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
 export function extractFields(text, { referenceDate }) {
   const events = [];
   const lower = text.toLowerCase();
@@ -107,9 +165,39 @@ export function extractFields(text, { referenceDate }) {
   else if (denied) event_type = "denied_visit";
   else if (mentionsExchange) event_type = "exchange";
   else if (/\bvisit\b/.test(lower)) event_type = "visit";
-  else if (/\b(call|phone)\b/.test(lower)) event_type = "call";
+  // Guard: PII redaction tokens ("[phone]", "[email]") must never read as
+  // incident keywords — "call me at [phone]" is not a call event.
+  else if (/(?<!\[)\b(call|phone)\b(?!\])/.test(lower)) event_type = "call";
 
-  if (!event_type) return events;
+  if (!event_type) {
+    // No incident keyword: try the emotion-notice arm before giving up.
+    if (!PAIN_PATTERNS.some((re) => re.test(text))) return events;
+    const since = parseSinceDate(text, referenceDate);
+    const kids = KNOWN_KIDS.filter((k) => new RegExp(`\\b${k}\\b`).test(text));
+    // Cold parent-statement facts only — the feeling stays in raw_quote.
+    const noteParts = [
+      since
+        ? `Parent reports limited time with the children since ${since}.`
+        : `Parent reports limited time with the children.`,
+    ];
+    if (
+      /\b(?:house|home)\s+(?:is|feels)\s+(?:so\s+)?(?:empty|quiet)\b/i.test(text) ||
+      /\bempty\s+house\b/i.test(text) ||
+      /\bwaiting\s+at\s+home\b/i.test(text)
+    ) {
+      noteParts.push("Parent reports waiting at home without the children.");
+    }
+    if (kids.length) noteParts.push(`Children named: ${kids.join(", ")}.`);
+    events.push({
+      event_type: "other",
+      occurred_at: new Date(referenceDate).toISOString(),
+      scheduled_at: null,
+      location: null,
+      kids,
+      notes: noteParts.join(" "),
+    });
+    return events;
+  }
 
   const schedMatch = /\b(?:supposed to(?:\s+\w+){0,4}?\s+at|scheduled(?:\s+for)?)\s+([\d:]+\s*(?:am|pm)?)/i.exec(text);
   const actualMatch = /\b(?:until|showed(?:\s+up)?\s+at|arrived(?:\s+at)?)\s+([\d:]+\s*(?:am|pm)?)/i.exec(text);
