@@ -38,6 +38,15 @@ export function clampProgressPatch(patch = {}) {
     }
   }
 
+  // Cold-ask hook: both fields are Chip speech, so PII-stripped and short.
+  // Empty after stripping/trimming → stored as null, never "".
+  if (typeof out.last_next_kind === "string") {
+    out.last_next_kind = stripPii(out.last_next_kind).text.trim().slice(0, 40) || null;
+  }
+  if (typeof out.last_ask_summary === "string") {
+    out.last_ask_summary = stripPii(out.last_ask_summary).text.trim().slice(0, 120) || null;
+  }
+
   if (out.this_week_total !== undefined && out.this_week_total !== null) {
     const total = toInt(out.this_week_total);
     if (total === null) {

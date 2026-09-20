@@ -152,6 +152,8 @@ export class SqlVault {
          next_action = coalesce(${lit(patch.next_action ?? null)}, state.next_action),
          this_week_done = coalesce(${lit(patch.this_week_done ?? null)}::integer, state.this_week_done),
          this_week_total = coalesce(${lit(patch.this_week_total ?? null)}::integer, state.this_week_total),
+         last_next_kind = coalesce(${lit(patch.last_next_kind ?? null)}, state.last_next_kind),
+         last_ask_summary = coalesce(${lit(patch.last_ask_summary ?? null)}, state.last_ask_summary),
          updated_at = now()
        where dad_id = ${lit(dadId)};`,
     );
@@ -162,7 +164,8 @@ export class SqlVault {
   async getState(dadId) {
     const rows = await this.exec(
       `select dad_id, phase, this_week, missing, next_action, last_next,
-              last_next_at, this_week_done, this_week_total, updated_at
+              last_next_at, this_week_done, this_week_total,
+              last_next_kind, last_ask_summary, updated_at
          from state where dad_id = ${lit(dadId)};`,
     );
     return rows?.[0] ?? null;
@@ -187,7 +190,11 @@ export class SqlVault {
       );
     }
     log("state.return", { table: "state", dad: dadId, has_next: Boolean(last_next) });
-    return { last_next };
+    return {
+      last_next,
+      last_next_kind: existing.last_next_kind ?? null,
+      last_ask_summary: existing.last_ask_summary ?? null,
+    };
   }
 
   // POST /vault/provision — insert-only (no ON CONFLICT). GET stays read-only.

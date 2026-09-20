@@ -86,6 +86,7 @@ Schema lives next to the app, not inside it:
 - `vault/004_noticed.sql` — `events.noticed_at` / `events.noticed_text` (applied with 001)
 - `vault/005_return.sql` — `state.last_next` / `state.last_next_at` (applied with 001)
 - `vault/006_progress.sql` — `state.this_week_done` / `state.this_week_total` (applied with 001)
+- `vault/007_cold_ask.sql` — `state.last_next_kind` / `state.last_ask_summary` (applied with 001)
 
 ## Tests
 
@@ -162,7 +163,7 @@ Off unless you start it. Product bots call these Phase 1 routes:
 
 **Auth (minimal):** After provision, send `Authorization: Bearer <token>` or `X-DDE-Token: <token>` on intake/state/comms/export. Missing/wrong → **401**; token for another dad → **403**; unprovisioned dad → **404** `unknown dad`. Writes never silent-create state. **Durable tokens:** SHA-256 hash only in Postgres (`dde_provision_tokens`) when vault is on `DATABASE_URL`, else `.dde-tokens.json` (override with `DDE_TOKENS_PATH`).
 | `GET` | `/vault/state` | `?dad_id=` → state row; **404** `{ "error": "unknown dad" }` if none (read-only) |
-| `PUT` | `/vault/state` | `{ dad_id, phase?, this_week?, missing?, next_action?, this_week_done?, this_week_total? }` (total clamps 3–7, done 0–total, missing ≤ 7 short strings) |
+| `PUT` | `/vault/state` | `{ dad_id, phase?, this_week?, missing?, next_action?, this_week_done?, this_week_total?, last_next_kind?, last_ask_summary? }` (total clamps 3–7, done 0–total, missing ≤ 7 short strings; free text + cold-ask fields PII-stripped) |
 | `GET` | `/vault/progress` | `?dad_id=` → `{ line, missing_one, grade }` (plain speech; nulls when nothing to say) |
 | `POST` | `/vault/comms/cold` | `{ dad_id, body_cold, channel }` → `{ id }` |
 | `POST` | `/vault/comms/pull` | `{ dad_id, channel, source_ref, body_cold?, sent_at? }` → `{ id }` |

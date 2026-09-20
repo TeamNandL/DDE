@@ -35,6 +35,14 @@ export function returnLine(lastNext) {
   return stripPii(`Last time: ${lastNext}. How'd it go?`).text;
 }
 
+// Cold-ask variant: when the last Next was a cold ask, greet with its
+// short summary instead of the raw next_action wording. Same rails:
+// plain speech, PII-stripped, null when there is nothing to say.
+export function coldAskLine(summary) {
+  if (typeof summary !== "string" || !summary.trim()) return null;
+  return stripPii(`Last time: cold ask — ${summary.trim()}. How'd it go?`).text;
+}
+
 /**
  * @param {object} vault
  * @param {{ tokenStore?: object }} [opts]
@@ -103,8 +111,13 @@ export function makeBff(vault, opts = {}) {
     // write → chase) — the dad's answer is a claim, never verified.
     async postVaultReturn({ dad_id, answer }, opts = {}) {
       await requireDad(dad_id);
-      const { last_next } = await vault.beginReturn(dad_id);
-      const out = { last_next, line: returnLine(last_next) };
+      const { last_next, last_next_kind, last_ask_summary } = await vault.beginReturn(dad_id);
+      // Cold-ask hook: prefer the ask summary; otherwise the generic line.
+      const line =
+        last_next_kind === "cold_ask" && last_ask_summary
+          ? coldAskLine(last_ask_summary)
+          : returnLine(last_next);
+      const out = { last_next, line };
       if (typeof answer === "string" && answer.trim()) {
         const { written, chase } = await extract(vault, dad_id, answer, opts);
         out.written = written;

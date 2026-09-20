@@ -86,6 +86,19 @@ do **not** invent a "last time". The dad's reply goes back as `answer` (same
 call) and writes claim through the intake pipeline (harm/PII/venom rails
 apply).
 
+**Cold-ask hook:** when the Next was a cold ask, Chip stores it on state at
+send time via `PUT /vault/state`:
+
+```
+{ "dad_id": "<uuid>", "last_next_kind": "cold_ask",
+  "last_ask_summary": "Sat window both kids 10–6" }
+```
+
+Both fields are PII-stripped on write (summary ≤ 120 chars). The next
+return then greets: `Last time: cold ask — Sat window both kids 10–6.
+How'd it go?` — kind without summary (or no kind) falls back to the
+generic line. Draft≠send unchanged: this hook never writes comms rows.
+
 ### 5) Soft progress (this week only)
 
 ```

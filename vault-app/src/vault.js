@@ -229,6 +229,8 @@ export class Vault {
       last_next_at: patch.last_next_at ?? existing?.last_next_at ?? null,
       this_week_done: patch.this_week_done ?? existing?.this_week_done ?? null,
       this_week_total: patch.this_week_total ?? existing?.this_week_total ?? null,
+      last_next_kind: patch.last_next_kind ?? existing?.last_next_kind ?? null,
+      last_ask_summary: patch.last_ask_summary ?? existing?.last_ask_summary ?? null,
       updated_at: new Date().toISOString(),
     };
     this.state.set(dadId, rec);
@@ -266,7 +268,11 @@ export class Vault {
       this.upsertState(dadId, { last_next, last_next_at: new Date().toISOString() });
     }
     log("state.return", { table: "state", dad: dadId, has_next: Boolean(last_next) });
-    return { last_next };
+    return {
+      last_next,
+      last_next_kind: existing.last_next_kind ?? null,
+      last_ask_summary: existing.last_ask_summary ?? null,
+    };
   }
 
   // POST /vault/provision — insert-only. Never used by GET /vault/state.
