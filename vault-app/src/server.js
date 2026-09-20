@@ -41,6 +41,7 @@ export const PHASE1_ROUTES = [
   "GET /vault/state",
   "PUT /vault/state",
   "GET /vault/progress",
+  "GET /vault/chip_entry",
   "POST /vault/comms/cold",
   "POST /vault/comms/pull",
   "GET /vault/export/verified",
@@ -283,6 +284,14 @@ export async function handleBffRequest(bff, req, url, body) {
     const state = await bff.putVaultState(body);
     log("http.state.put", { dad: dad_id });
     return { status: 200, body: state };
+  }
+
+  if (method === "GET" && path === "/vault/chip_entry") {
+    // Read-only: never writes, never stamps last_next.
+    const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
+    await gateDad(bff, req, dad_id);
+    log("http.chip_entry", { dad: dad_id });
+    return { status: 200, body: await bff.getChipEntry({ dad_id }) };
   }
 
   if (method === "GET" && path === "/vault/progress") {

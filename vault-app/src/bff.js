@@ -169,6 +169,35 @@ export function makeBff(vault, opts = {}) {
       return out;
     },
 
+    // GET /vault/chip_entry {dad_id}
+    //   -> {progress_line, missing_one, next_action, return_line}
+    // Read-only speakable bundle: everything Chip says at entry without
+    // composing. Nulls when there is nothing — counters and greetings are
+    // never invented. return_line is the SAME text POST /vault/return
+    // would greet with, composed from state without stamping last_next —
+    // the return POST remains the only write on that path.
+    async getChipEntry({ dad_id }) {
+      const state = await requireDad(dad_id);
+      const next = state.next_action ? stripPii(String(state.next_action)).text : null;
+      const firstMissing = state.missing?.[0];
+      const return_line =
+        state.last_next_kind === "cold_ask" && state.last_ask_summary
+          ? coldAskLine(state.last_ask_summary)
+          : returnLine(next);
+      const out = {
+        progress_line: progressChipLine(state),
+        missing_one: firstMissing ? stripPii(String(firstMissing)).text : null,
+        next_action: next,
+        return_line,
+      };
+      log("chip_entry", {
+        dad: dad_id,
+        has_progress: Boolean(out.progress_line),
+        has_next: Boolean(next),
+      });
+      return out;
+    },
+
     // POST /vault/missing/seed {dad_id, pack?} -> {written, missing_one, progress_line}
     // Seeds an EMPTY checklist with PII-safe blanks (labels only, no case
     // data). Non-empty missing is never overwritten. Counters are set to

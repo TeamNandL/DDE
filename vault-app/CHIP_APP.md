@@ -170,6 +170,21 @@ when **both** were null; existing counters are never touched. The dad
 then fills them one at a time via `/vault/missing/fill`. Unknown pack →
 400.
 
+### 8) Chip entry bundle (speak without composing)
+
+```
+GET /vault/chip_entry?dad_id=<uuid>
+Authorization: Bearer <token>
+
+→ 200 { "progress_line": … | null, "missing_one": … | null,
+        "next_action": … | null, "return_line": … | null }
+```
+
+Read-only: everything Chip says at entry, pre-composed and PII-stripped —
+nulls mean say nothing (never invented). `return_line` is the same
+greeting `POST /vault/return` gives, but this GET **never stamps
+`last_next`** — still call the return POST for the loop itself.
+
 ### Auth header
 
 `Authorization: Bearer <token>` (preferred) or `X-DDE-Token: <token>`.
