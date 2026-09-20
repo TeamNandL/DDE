@@ -23,9 +23,20 @@ function toInt(v) {
  * Normalize a PUT /vault/state patch in one place (both stores go through
  * the BFF). Fields absent from the patch stay absent — untouched fields
  * are never rewritten.
+ *
+ * Chip-safety: the free-text fields (this_week, next_action, missing[])
+ * are SPOKEN back — next_action is the One Next, missing feeds
+ * /vault/progress missing_one — so PII is stripped at this write path,
+ * same rule as intake.
  */
 export function clampProgressPatch(patch = {}) {
   const out = { ...patch };
+
+  for (const field of ["this_week", "next_action"]) {
+    if (typeof out[field] === "string") {
+      out[field] = stripPii(out[field]).text;
+    }
+  }
 
   if (out.this_week_total !== undefined && out.this_week_total !== null) {
     const total = toInt(out.this_week_total);
@@ -48,7 +59,7 @@ export function clampProgressPatch(patch = {}) {
 
   if (Array.isArray(out.missing)) {
     out.missing = out.missing
-      .map((m) => String(m ?? "").trim())
+      .map((m) => stripPii(String(m ?? "")).text.trim())
       .filter(Boolean)
       .map((m) => m.slice(0, MISSING_ITEM_MAX_CHARS))
       .slice(0, MISSING_MAX_ITEMS);

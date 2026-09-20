@@ -168,9 +168,12 @@ export function makeBff(vault, opts = {}) {
     // item or null (empty missing is fine).
     async getVaultProgress({ dad_id }) {
       const state = await requireDad(dad_id);
+      // missing_one is spoken by Chip; the write path strips PII, and this
+      // read-side strip covers rows written before that rail existed.
+      const firstMissing = state.missing?.[0];
       const out = {
         line: progressLine(state),
-        missing_one: state.missing?.[0] ?? null,
+        missing_one: firstMissing ? stripPii(String(firstMissing)).text : null,
         grade: softGrade(state),
       };
       log("progress", { dad: dad_id, has_line: Boolean(out.line), has_grade: Boolean(out.grade) });
