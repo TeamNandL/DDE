@@ -1,6 +1,6 @@
 // Vault search on rented Postgres — same tenancy matrix as search.test.js,
-// running through the app path only: BFF → SqlVault → vault_search()
-// (vault/003_search.sql) → node-postgres.
+// running through the app path only: BFF → SqlVault → FTS
+// (vault/003_fts.sql) → node-postgres.
 //
 // Requires DATABASE_URL (never committed). Without it, or where the network
 // blocks the database host, this SKIPS and the Postgres leg counts as

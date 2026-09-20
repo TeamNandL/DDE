@@ -3,18 +3,28 @@
 // Off unless you start this process (`npm run serve` or `node src/server.js --http`).
 // Product bots call these routes; seats still never touch the vault directly.
 //
-// AUTH is not built (later gate). Bind to 127.0.0.1 by default locally.
+// Minimal token gate: provision returns {dad_id, token}; mutating routes and
+// sensitive reads require Authorization: Bearer <token> or X-DDE-Token matching
+// that dad. Token *hashes* persist via tokens.js (Postgres when vault is on
+// DATABASE_URL; else .dde-tokens.json). Bind to 127.0.0.1 by default locally.
 // Production / container hosts (Docker, Fly, Render) listen on 0.0.0.0:$PORT
-// — see HOSTING.md. That is a bind note only; no auth is added here.
+// — see HOSTING.md.
 
 import http from "node:http";
-import { resolve } from "node:path";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { makeBff } from "./bff.js";
 import { databaseUrl, openStore } from "./store.js";
+import { defaultJsonPath, openTokenStore } from "./tokens.js";
 import { DEMO_DAD_ID, seedDemo } from "./demo.js";
 import { log } from "./logger.js";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const CHIP_ENTRY_HTML = readFileSync(resolve(__dirname, "../public/chip-entry.html"), "utf8");
+
+export const CHIP_ENTRY_PATHS = ["/app", "/chip/entry"];
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -23,6 +33,7 @@ const MAX_BODY = 64 * 1024;
 
 export const PHASE1_ROUTES = [
   "POST /vault/intake",
+  "POST /vault/provision",
   "GET /vault/state",
   "PUT /vault/state",
   "POST /vault/comms/cold",
@@ -35,6 +46,15 @@ function json(res, status, body) {
   const payload = JSON.stringify(body);
   res.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
+    "content-length": Buffer.byteLength(payload),
+  });
+  res.end(payload);
+}
+
+function send(res, status, body, contentType = "application/json; charset=utf-8") {
+  const payload = typeof body === "string" ? body : JSON.stringify(body);
+  res.writeHead(status, {
+    "content-type": contentType,
     "content-length": Buffer.byteLength(payload),
   });
   res.end(payload);
@@ -87,6 +107,33 @@ function normalizePath(pathname) {
   return pathname;
 }
 
+/** Bearer <token> or X-DDE-Token */
+export function extractToken(req) {
+  const auth = req.headers?.authorization;
+  if (typeof auth === "string") {
+    const m = /^Bearer\s+(\S+)/i.exec(auth.trim());
+    if (m) return m[1];
+  }
+  const x = req.headers?.["x-dde-token"];
+  if (typeof x === "string" && x.trim()) return x.trim();
+  return null;
+}
+
+/**
+ * Tenancy + auth for every dad-scoped route except provision.
+ * Order: dad exists → 404 unknown dad; then token → 401/403.
+ * (Unprovisioned curls without a token must still get 404, not 401.)
+ */
+async function gateDad(bff, req, dad_id) {
+  const state = await bff.getVaultState({ dad_id });
+  if (!state) {
+    const err = new Error("unknown dad");
+    err.status = 404;
+    throw err;
+  }
+  await bff.checkToken(dad_id, extractToken(req));
+}
+
 export async function handleBffRequest(bff, req, url, body) {
   const path = normalizePath(url.pathname);
   const method = req.method || "GET";
@@ -97,6 +144,15 @@ export async function handleBffRequest(bff, req, url, body) {
     return { status: 200, body: { ok: true } };
   }
 
+  // Chip deep-link entry — static minimal HTML (same origin as BFF).
+  if (method === "GET" && CHIP_ENTRY_PATHS.includes(path)) {
+    return {
+      status: 200,
+      body: CHIP_ENTRY_HTML,
+      contentType: "text/html; charset=utf-8",
+    };
+  }
+
   if (method === "GET" && path === "/") {
     return {
       status: 200,
@@ -105,12 +161,25 @@ export async function handleBffRequest(bff, req, url, body) {
         name: "dde-vault-bff",
         phase: 1,
         routes: PHASE1_ROUTES,
+        chip_entry: CHIP_ENTRY_PATHS,
       },
     };
   }
 
+  // ONLY create path — no prior token required.
+  if (method === "POST" && path === "/vault/provision") {
+    const dad_id =
+      body.dad_id === undefined || body.dad_id === null || body.dad_id === ""
+        ? undefined
+        : requireDadId(body.dad_id);
+    const out = await bff.postVaultProvision({ dad_id });
+    log("http.provision", { dad: out.dad_id });
+    return { status: 200, body: out };
+  }
+
   if (method === "POST" && path === "/vault/intake") {
     const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
     const text = typeof body.text === "string" ? body.text : "";
     if (!text.trim()) {
       const err = new Error("text is required");
@@ -122,15 +191,18 @@ export async function handleBffRequest(bff, req, url, body) {
   }
 
   if (method === "GET" && path === "/vault/state") {
+    // Read-only: never insert/upsert/create on GET.
     const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
+    await gateDad(bff, req, dad_id);
     const state = await bff.getVaultState({ dad_id });
-    if (!state) return { status: 404, body: { error: "state not found" } };
+    if (!state) return { status: 404, body: { error: "unknown dad" } };
     log("http.state.get", { dad: dad_id });
     return { status: 200, body: state };
   }
 
-  if (method === "PUT" && path === "/vault/state") {
+  if ((method === "PUT" || method === "PATCH") && path === "/vault/state") {
     const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
     const state = await bff.putVaultState(body);
     log("http.state.put", { dad: dad_id });
     return { status: 200, body: state };
@@ -138,6 +210,7 @@ export async function handleBffRequest(bff, req, url, body) {
 
   if (method === "POST" && path === "/vault/comms/cold") {
     const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
     if (typeof body.body_cold !== "string" || !body.body_cold.trim()) {
       const err = new Error("body_cold is required");
       err.status = 400;
@@ -149,6 +222,7 @@ export async function handleBffRequest(bff, req, url, body) {
 
   if (method === "POST" && path === "/vault/comms/pull") {
     const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
     if (typeof body.source_ref !== "string" || !body.source_ref.trim()) {
       const err = new Error("source_ref is required");
       err.status = 400;
@@ -158,29 +232,34 @@ export async function handleBffRequest(bff, req, url, body) {
     return { status: 200, body: await bff.postCommsPull(body) };
   }
 
-  // Seat search/filter surface. dad_id REQUIRED (400 without it); q optional
-  // (empty q = filtered list). May return claim and verified rows, labeled.
-  // NOT a Reporting route — exhibits still use /vault/export/verified only.
-  // The query text is never logged.
-  if (method === "GET" && path === "/vault/search") {
+  if (method === "GET" && path === "/vault/export/verified") {
     const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
-    const rows = await bff.getVaultSearch({
-      dad_id,
-      q: q.get("q") ?? undefined,
-      pipe: q.get("pipe") ?? undefined,
-      type: q.get("type") ?? undefined,
-      from: q.get("from") ?? undefined,
-      to: q.get("to") ?? undefined,
-      limit: q.get("limit") ?? undefined,
-    });
-    log("http.search", { dad: dad_id, hits: rows.length });
+    await gateDad(bff, req, dad_id);
+    const rows = await bff.getVaultExportVerified({ dad_id });
     return { status: 200, body: rows };
   }
 
-  if (method === "GET" && path === "/vault/export/verified") {
+
+  if (method === "GET" && path === "/vault/search") {
     const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
-    const rows = await bff.getVaultExportVerified({ dad_id });
-    return { status: 200, body: rows };
+    await gateDad(bff, req, dad_id);
+    const result = await bff.getVaultSearch({
+      dad_id,
+      q: q.get("q") ?? body.q ?? "",
+      pipe: q.get("pipe") ?? body.pipe ?? "",
+      type: q.get("type") ?? body.type ?? "all",
+      from: q.get("from") ?? body.from ?? "",
+      to: q.get("to") ?? body.to ?? "",
+      limit: q.get("limit") ?? body.limit ?? "",
+    });
+    // Log hygiene: ids/counts only — never raw_quote / body / snippet.
+    log("http.search", {
+      dad: dad_id,
+      hits: result.hits?.length ?? 0,
+      mode: result.mode,
+      q_len: String(q.get("q") ?? "").length,
+    });
+    return { status: 200, body: result };
   }
 
   return { status: 404, body: { error: "not found" } };
@@ -195,7 +274,8 @@ export function createServer(bff) {
         body = await readBody(req);
       }
       const result = await handleBffRequest(bff, req, url, body);
-      json(res, result.status, result.body);
+      const ct = result.contentType || "application/json; charset=utf-8";
+      send(res, result.status, result.body, ct);
     } catch (err) {
       const status = Number(err?.status);
       const msg = String(err?.message || "bad request");
@@ -254,6 +334,8 @@ export async function main(argv = process.argv.slice(2)) {
         "  HOST=0.0.0.0 PORT=8787 node src/server.js --http   # container / Fly / Render\n\n" +
         "Routes: " +
         PHASE1_ROUTES.join(", ") +
+        "\nChip entry: " +
+        CHIP_ENTRY_PATHS.join(", ") +
         "\n",
     );
     return { started: false };
@@ -262,7 +344,13 @@ export async function main(argv = process.argv.slice(2)) {
   const url = databaseUrl();
   const usePostgres = Boolean(url) && (!values.demo || values["on-db"]);
   const store = await openStore({ databaseUrl: usePostgres ? url : "" });
-  const bff = makeBff(store.vault);
+  // Prefer Postgres token table when vault already on PG; else JSON file.
+  const tokenStore = usePostgres
+    ? await openTokenStore({ query: store.query })
+    : await openTokenStore({
+        jsonPath: process.env.DDE_TOKENS_PATH || defaultJsonPath(),
+      });
+  const bff = makeBff(store.vault, { tokenStore });
   if (values.demo) {
     await seedDemo(bff, DEMO_DAD_ID);
   }
@@ -274,10 +362,13 @@ export async function main(argv = process.argv.slice(2)) {
   const server = createServer(bff);
   const addr = await listenServer(server, { host, port });
   const bound = typeof addr === "object" && addr ? `http://${addr.address}:${addr.port}` : "";
-  process.stdout.write(`dde-vault-bff ${bound} store=${store.kind} demo=${Boolean(values.demo)}\n`);
+  process.stdout.write(
+    `dde-vault-bff ${bound} store=${store.kind} tokens=${tokenStore.kind} demo=${Boolean(values.demo)}\n`,
+  );
 
   const shutdown = async () => {
     server.close();
+    await tokenStore.close();
     await store.close();
   };
   process.on("SIGINT", () => {

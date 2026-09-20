@@ -52,6 +52,9 @@ test(
     const dadId = randomUUID();
 
     try {
+      // Provision first (only create path) — tenancy/auth requires it.
+      await bff.postVaultProvision({ dad_id: dadId });
+
       // Day 1 (Monday): denied-visit claim through Intake — the app path.
       const monday = await bff.postVaultIntake(
         { dad_id: dadId, text: DENIED_VISIT_VENT },

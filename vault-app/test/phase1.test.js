@@ -33,8 +33,14 @@ function freshSession() {
   return { vault, bff: makeBff(vault) };
 }
 
-async function ventSession() {
+async function provisionedSession() {
   const s = freshSession();
+  s.prov = await s.bff.postVaultProvision({ dad_id: DAD_ID });
+  return s;
+}
+
+async function ventSession() {
+  const s = await provisionedSession();
   s.intakeResult = await s.bff.postVaultIntake(
     { dad_id: DAD_ID, text: FIXED_VENT },
     { referenceDate: MONDAY },
@@ -109,8 +115,9 @@ test("Test 5: Verified export clean — GET /vault/export/verified returns zero 
   assert.equal(rows.length, 0, "verified export is empty — claims never leak to Reporting");
 });
 
-test("Test 6: Harm discard — harm-language input → written: 0, zero rows, zero log lines containing the input", async () => {
-  const { vault, bff } = freshSession();
+test("Test 6: Harm discard — harm-language input → written: 0, no event rows, no retention of the input", async () => {
+  const { vault, bff } = await provisionedSession();
+  logger.reset(); // isolate harm-call logs from provision
   const harmInput =
     "I am so angry I could hurt Jordan the next time she pulls this at the exchange.";
   const result = await bff.postVaultIntake(
@@ -118,7 +125,8 @@ test("Test 6: Harm discard — harm-language input → written: 0, zero rows, ze
     { referenceDate: MONDAY },
   );
   assert.deepEqual(result, { written: 0, chase: [] });
-  assert.equal(vault.allRows().length, 0, "zero rows anywhere");
+  assert.equal(vault.events.length, 0, "zero event rows");
+  assert.equal(vault.communications.length, 0, "zero comm rows");
   assert.equal(logger.lines().length, 0, "zero log lines at all from the harm call");
   assert.ok(!dump(vault).includes("hurt"), "zero retention of the input");
 });
@@ -165,7 +173,7 @@ test("cancelled/denied visit phrasing writes ≥1 claim event and still chases t
   ];
 
   for (const { text, event_type } of cases) {
-    const { vault, bff } = freshSession();
+    const { vault, bff } = await provisionedSession();
     const result = await bff.postVaultIntake(
       { dad_id: DAD_ID, text },
       { referenceDate: MONDAY },

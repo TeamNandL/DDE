@@ -17,7 +17,6 @@
 
 import { randomUUID } from "node:crypto";
 import { log } from "./logger.js";
-import { validateSearchParams } from "./search.js";
 
 // SQL literal helpers. Values are embedded (not bound) because the emit
 // transport needs full statements; everything funnels through these quoters.
@@ -63,22 +62,27 @@ export class SqlVault {
     return { id, dad_id: dadId, ...row };
   }
 
-  // One statement: upsert state, append the chase item if absent, and make
-  // it the next_action when none is set (Edge needs exactly one).
+  // Claim chase — update-only. Missing dad → 404 (no silent insert).
   async appendMissing(dadId, item) {
+    const existing = await this.getState(dadId);
+    if (!existing) {
+      const e = new Error("unknown dad");
+      e.status = 404;
+      throw e;
+    }
     await this.exec(
-      `insert into state (dad_id, missing, next_action)
-       values (${lit(dadId)}, ${litArr([item])}, ${lit(item)})
-       on conflict (dad_id) do update set
+      `update state set
          missing = case when ${lit(item)} = any(state.missing)
                         then state.missing
                         else array_append(state.missing, ${lit(item)}::text) end,
          next_action = coalesce(state.next_action, ${lit(item)}),
-         updated_at = now();`,
+         updated_at = now()
+       where dad_id = ${lit(dadId)};`,
     );
-    log("state.upsert", { table: "state", dad: dadId });
+    log("state.update", { table: "state", dad: dadId });
   }
 
+  // Legacy upsert kept for internal/tools — prefer updateState on HTTP writes.
   async upsertState(dadId, patch) {
     await this.exec(
       `insert into state (dad_id, phase, this_week, missing, next_action)
@@ -95,12 +99,53 @@ export class SqlVault {
     return this.getState(dadId);
   }
 
+  // PUT /vault/state — update-only. Does not create.
+  async updateState(dadId, patch) {
+    const existing = await this.getState(dadId);
+    if (!existing) {
+      const e = new Error("unknown dad");
+      e.status = 404;
+      throw e;
+    }
+    await this.exec(
+      `update state set
+         phase = coalesce(${lit(patch.phase ?? null)}, state.phase),
+         this_week = coalesce(${lit(patch.this_week ?? null)}, state.this_week),
+         missing = ${patch.missing ? litArr(patch.missing) : "state.missing"},
+         next_action = coalesce(${lit(patch.next_action ?? null)}, state.next_action),
+         updated_at = now()
+       where dad_id = ${lit(dadId)};`,
+    );
+    log("state.update", { table: "state", dad: dadId });
+    return this.getState(dadId);
+  }
+
   async getState(dadId) {
     const rows = await this.exec(
       `select dad_id, phase, this_week, missing, next_action, updated_at
          from state where dad_id = ${lit(dadId)};`,
     );
     return rows?.[0] ?? null;
+  }
+
+  // POST /vault/provision — insert-only (no ON CONFLICT). GET stays read-only.
+  async provisionState(dadId) {
+    try {
+      await this.exec(
+        `insert into state (dad_id, phase, missing, next_action)
+         values (${lit(dadId)}, 'intake', '{}'::text[], null);`,
+      );
+    } catch (err) {
+      const msg = String(err?.message || err);
+      if (/unique|duplicate|already exists/i.test(msg)) {
+        const e = new Error("dad already provisioned");
+        e.status = 409;
+        throw e;
+      }
+      throw err;
+    }
+    log("state.provision", { table: "state", dad: dadId });
+    return this.getState(dadId);
   }
 
   async listEvents(dadId) {
@@ -124,23 +169,6 @@ export class SqlVault {
     );
   }
 
-  // Full-text search via vault_search() (vault/003_search.sql). dad_id is a
-  // required argument of the SQL function itself — no cross-tenant path
-  // exists. The query text goes to the database as a parameter of that
-  // function and is never logged (only its length and the hit count).
-  async search(params) {
-    const p = validateSearchParams(params);
-    const rows =
-      (await this.exec(
-        `select source_table, id, dad_id, pipe, rank, snippet, ts, created_at
-           from vault_search(${lit(p.dadId)}::uuid, ${lit(p.q)}, ${lit(p.pipe)},
-                             ${lit(p.type)}, ${lit(p.from ? p.from.toISOString() : null)},
-                             ${lit(p.to ? p.to.toISOString() : null)}, ${p.limit});`,
-      )) ?? [];
-    log("search", { dad: p.dadId, hits: rows.length, qlen: p.q ? p.q.length : 0 });
-    return rows;
-  }
-
   // Row counts per table for a dad — used by the harm-discard assertion.
   async countRows(dadId) {
     const rows = await this.exec(
@@ -152,4 +180,172 @@ export class SqlVault {
     );
     return rows?.[0] ?? null;
   }
+
+  /**
+   * Postgres FTS search. Always filters by dad_id (caller must supply).
+   * Returns { mode: "fts", hits: [{id,type,pipe,snippet,rank,ts,dad_id}] }.
+   * Logs never include raw_quote / body text.
+   */
+  async search(opts) {
+    const dadId = opts.dad_id;
+    const q = opts.q || "";
+    const pipe = opts.pipe || null;
+    const type = opts.type || "all";
+    const from = opts.from || null;
+    const to = opts.to || null;
+    const limit = opts.limit || 50;
+
+    const types =
+      type === "all"
+        ? ["events", "communications", "documents", "state", "month_summary"]
+        : [type];
+
+    const arms = [];
+    const qLit = lit(q);
+    const hasQ = Boolean(q);
+
+    const pipeClause = (alias = "") => {
+      const p = alias ? `${alias}.pipe` : "pipe";
+      return pipe ? ` and ${p} = ${lit(pipe)}` : "";
+    };
+    const rangeClause = (col) => {
+      let s = "";
+      if (from) s += ` and ${col} >= ${lit(from)}::timestamptz`;
+      if (to) s += ` and ${col} <= ${lit(to)}::timestamptz`;
+      return s;
+    };
+
+    if (types.includes("events")) {
+      arms.push(`
+        select e.id, e.dad_id, e.pipe, 'events'::text as type,
+               ${hasQ ? `ts_rank(e.search_tsv, query)` : "0::float"} as rank,
+               ${
+                 hasQ
+                   ? `ts_headline('english', coalesce(e.notes,'') || ' ' || coalesce(e.raw_quote,''), query,
+                        'MaxFragments=1, MaxWords=18, MinWords=4')`
+                   : `left(coalesce(e.notes, e.raw_quote, ''), 120)`
+               } as snippet,
+               e.occurred_at as ts
+          from events e${hasQ ? `, plainto_tsquery('english', ${qLit}) query` : ""}
+         where e.dad_id = ${lit(dadId)}
+           ${pipeClause("e")}
+           ${rangeClause("e.occurred_at")}
+           ${hasQ ? "and e.search_tsv @@ query" : ""}
+      `);
+    }
+
+    if (types.includes("communications")) {
+      arms.push(`
+        select c.id, c.dad_id, c.pipe, 'communications'::text as type,
+               ${hasQ ? `ts_rank(c.search_tsv, query)` : "0::float"} as rank,
+               ${
+                 hasQ
+                   ? `ts_headline('english', coalesce(c.body_cold,'') || ' ' || coalesce(c.raw_quote,''), query,
+                        'MaxFragments=1, MaxWords=18, MinWords=4')`
+                   : `left(coalesce(c.body_cold, c.raw_quote, ''), 120)`
+               } as snippet,
+               coalesce(c.sent_at, c.created_at) as ts
+          from communications c${hasQ ? `, plainto_tsquery('english', ${qLit}) query` : ""}
+         where c.dad_id = ${lit(dadId)}
+           ${pipeClause("c")}
+           ${rangeClause("coalesce(c.sent_at, c.created_at)")}
+           ${hasQ ? "and c.search_tsv @@ query" : ""}
+      `);
+    }
+
+    if (types.includes("documents")) {
+      arms.push(`
+        select d.id, d.dad_id, d.pipe, 'documents'::text as type,
+               ${hasQ ? `ts_rank(d.search_tsv, query)` : "0::float"} as rank,
+               ${
+                 hasQ
+                   ? `ts_headline('english', coalesce(d.extracted::text,'') || ' ' || coalesce(d.raw_quote,''), query,
+                        'MaxFragments=1, MaxWords=18, MinWords=4')`
+                   : `left(coalesce(d.extracted::text, d.raw_quote, ''), 120)`
+               } as snippet,
+               d.created_at as ts
+          from documents d${hasQ ? `, plainto_tsquery('english', ${qLit}) query` : ""}
+         where d.dad_id = ${lit(dadId)}
+           ${pipeClause("d")}
+           ${rangeClause("d.created_at")}
+           ${hasQ ? "and d.search_tsv @@ query" : ""}
+      `);
+    }
+
+    if (types.includes("state")) {
+      arms.push(`
+        select s.id, s.dad_id, s.pipe, 'state'::text as type,
+               ${hasQ ? `ts_rank(s.search_tsv, query)` : "0::float"} as rank,
+               ${
+                 hasQ
+                   ? `ts_headline('english',
+                        coalesce(s.this_week,'') || ' ' || coalesce(array_to_string(s.missing,' '),'') || ' ' || coalesce(s.next_action,''),
+                        query, 'MaxFragments=1, MaxWords=18, MinWords=4')`
+                   : `left(coalesce(s.this_week, s.next_action, ''), 120)`
+               } as snippet,
+               s.updated_at as ts
+          from state s${hasQ ? `, plainto_tsquery('english', ${qLit}) query` : ""}
+         where s.dad_id = ${lit(dadId)}
+           ${pipeClause("s")}
+           ${rangeClause("s.updated_at")}
+           ${hasQ ? "and s.search_tsv @@ query" : ""}
+      `);
+    }
+
+    if (types.includes("month_summary")) {
+      arms.push(`
+        select m.id, m.dad_id, m.pipe, 'month_summary'::text as type,
+               ${hasQ ? `ts_rank(m.search_tsv, query)` : "0::float"} as rank,
+               ${
+                 hasQ
+                   ? `ts_headline('english',
+                        coalesce(m.summary_text,'') || ' ' || coalesce(array_to_string(m.highlights,' '),''),
+                        query, 'MaxFragments=1, MaxWords=18, MinWords=4')`
+                   : `left(coalesce(m.summary_text, ''), 120)`
+               } as snippet,
+               m.created_at as ts
+          from month_summary m${hasQ ? `, plainto_tsquery('english', ${qLit}) query` : ""}
+         where m.dad_id = ${lit(dadId)}
+           ${pipeClause("m")}
+           ${rangeClause("m.created_at")}
+           ${hasQ ? "and m.search_tsv @@ query" : ""}
+      `);
+    }
+
+    if (arms.length === 0) {
+      return { mode: "fts", hits: [] };
+    }
+
+    const sql = `
+      select id, dad_id, pipe, type, rank, snippet, ts
+        from (
+          ${arms.join("\n union all \n")}
+        ) hits
+       order by rank desc nulls last, ts desc nulls last
+       limit ${Number(limit)};
+    `;
+
+    const rows = (await this.exec(sql)) ?? [];
+    log("search.fts", {
+      dad: dadId,
+      hits: rows.length,
+      type,
+      pipe: pipe || "any",
+      q_len: q.length,
+    });
+
+    return {
+      mode: "fts",
+      hits: rows.map((r) => ({
+        id: r.id,
+        dad_id: r.dad_id,
+        type: r.type,
+        pipe: r.pipe,
+        snippet: r.snippet ?? "",
+        rank: Number(r.rank) || 0,
+        ts: r.ts,
+      })),
+    };
+  }
+
 }

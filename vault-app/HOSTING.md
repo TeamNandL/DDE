@@ -4,14 +4,15 @@ Production path: Docker image runs `node src/server.js --http` on `0.0.0.0:$PORT
 
 **Zero secrets in git.** Put `DATABASE_URL` in the platform secret store only. Do not commit `.env`, connection strings, or passwords. Schema apply is `vault/001_schema.sql` only — do **not** run `vault/002_rls_plan.sql` (RLS stays off).
 
-Auth is a later gate. Binding `0.0.0.0` makes every Phase 1 route reachable on the public URL. Treat this as a trusted-bot endpoint, not a public client.
+Minimal token gate: `POST /vault/provision` returns `{dad_id, token}`. Mutating routes and sensitive reads (`GET /vault/state`, `GET /vault/export/verified`) require `Authorization: Bearer <token>` or `X-DDE-Token`. Token **hashes** persist (Postgres `dde_provision_tokens` when `DATABASE_URL` / vault on PG; else `.dde-tokens.json`). Not OAuth/JWT. Binding `0.0.0.0` still exposes the URL — treat as a trusted-bot endpoint.
 
 ## Health
 
 | Path | Needs DB? | Notes |
 | --- | --- | --- |
 | `GET /health` | No | `{ "ok": true }` — use this for Fly/Render checks |
-| `GET /vault/state?dad_id=<uuid>` | Yes | 200 when that dad has a state row; 404 otherwise |
+| `GET /vault/state?dad_id=<uuid>` | Yes | Requires Bearer/`X-DDE-Token`. 200 when provisioned; **404** `{"error":"unknown dad"}` otherwise (read-only — no create) |
+| `POST /vault/provision` | Yes | **Only** create path. Inserts `state` (`phase=intake`, `missing=[]`, `next_action=null`). Returns `{dad_id, token}` (`dde-stub-<uuid>`). Stores **token_hash** only (durable) |
 
 ## Build locally
 
@@ -46,3 +47,9 @@ Pass `-e DATABASE_URL="$DATABASE_URL"` from your shell. Never bake the URL into 
 - `PORT` — platform or `8787`
 - `HOST` — `0.0.0.0` in the image / production; `127.0.0.1` on a laptop
 - `DATABASE_URL` unset → in-memory vault (fine for a smoke `GET /health`; state routes will not persist)
+
+## Chip entry + live lag
+
+`GET /app` and `GET /chip/entry` serve the same minimal Chip HTML (see `CHIP_APP.md`).
+
+**LIVE BFF note:** `https://dde-vault-bff-production.up.railway.app` may lag tip until the next deploy — tip/localhost is the source of truth for this slice.

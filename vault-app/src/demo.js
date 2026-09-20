@@ -18,7 +18,16 @@ export function readFixedVent() {
 }
 
 // All writes go through the BFF — same app path as Intake / product bots.
+// Provision first: only POST /vault/provision creates state.
 export async function seedDemo(bff, dadId = DEMO_DAD_ID) {
+  let token;
+  try {
+    const prov = await bff.postVaultProvision({ dad_id: dadId });
+    token = prov.token;
+  } catch (err) {
+    if (err?.status !== 409) throw err;
+    // Already provisioned (e.g. re-seed) — continue without new token.
+  }
   const intake = await bff.postVaultIntake(
     { dad_id: dadId, text: readFixedVent() },
     { referenceDate: DEMO_MONDAY },
@@ -35,5 +44,5 @@ export async function seedDemo(bff, dadId = DEMO_DAD_ID) {
     body_cold: "OFW thread pulled for the September 14 exchange.",
     sent_at: "2026-09-14T18:00:00.000Z",
   });
-  return { dad_id: dadId, intake, cold, pull };
+  return { dad_id: dadId, token, intake, cold, pull };
 }

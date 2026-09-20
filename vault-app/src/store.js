@@ -7,7 +7,7 @@
 
 import { Vault } from "./vault.js";
 import { SqlVault } from "./sqlvault.js";
-import { applyPhase1Schema } from "./schema.js";
+import { applyVaultSchema } from "./schema.js";
 import "./env.js";
 
 export function databaseUrl() {
@@ -26,7 +26,7 @@ export async function openStore(opts = {}) {
     const exec = async (sql) => (await pool.query(sql)).rows;
     const query = (sql, params) => pool.query(sql, params);
     if (opts.applySchema !== false) {
-      await applyPhase1Schema(exec);
+      await applyVaultSchema(exec);
     }
     return {
       kind: "postgres",

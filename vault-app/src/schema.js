@@ -1,4 +1,4 @@
-// Apply the vault schema: 001 (tables/views) + 003 (search).
+// Apply Phase 1 schema (vault/001_schema.sql) + FTS (vault/003_fts.sql).
 // Never apply vault/002_rls_plan.sql here — RLS stays documented, not enabled.
 
 import { readFileSync } from "node:fs";
@@ -8,19 +8,18 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 export const SCHEMA_PATH = resolve(here, "../../vault/001_schema.sql");
 export const RLS_PLAN_PATH = resolve(here, "../../vault/002_rls_plan.sql");
-export const SEARCH_SCHEMA_PATH = resolve(here, "../../vault/003_search.sql");
+export const FTS_SCHEMA_PATH = resolve(here, "../../vault/003_fts.sql");
 
 export function readPhase1SchemaSql() {
   return readFileSync(SCHEMA_PATH, "utf8");
 }
 
-export function readSearchSchemaSql() {
-  return readFileSync(SEARCH_SCHEMA_PATH, "utf8");
+export function readFtsSchemaSql() {
+  return readFileSync(FTS_SCHEMA_PATH, "utf8");
 }
 
-// node-pg's extended protocol rejects multi-statement strings. The schema
-// files keep semicolons out of literals and dollar-quoted bodies, so a
-// comment-strip + split is safe.
+// node-pg's extended protocol rejects multi-statement strings. The Phase 1
+// file has no semicolons inside literals, so a comment-strip + split is safe.
 export function splitSqlStatements(sql) {
   return sql
     .replace(/--[^\n]*/g, "")
@@ -30,13 +29,23 @@ export function splitSqlStatements(sql) {
 }
 
 export async function applyPhase1Schema(exec) {
-  for (const [name, sql] of [
-    ["001_schema.sql", readPhase1SchemaSql()],
-    ["003_search.sql", readSearchSchemaSql()],
-  ]) {
-    if (!sql.trim()) throw new Error(`${name} is empty`);
-    for (const stmt of splitSqlStatements(sql)) {
-      await exec(stmt);
-    }
+  const sql = readPhase1SchemaSql();
+  if (!sql.trim()) throw new Error("001_schema.sql is empty");
+  for (const stmt of splitSqlStatements(sql)) {
+    await exec(stmt);
   }
+}
+
+export async function applyFtsSchema(exec) {
+  const sql = readFtsSchemaSql();
+  if (!sql.trim()) throw new Error("003_fts.sql is empty");
+  for (const stmt of splitSqlStatements(sql)) {
+    await exec(stmt);
+  }
+}
+
+/** Phase 1 tables + FTS generated columns / GIN indexes. */
+export async function applyVaultSchema(exec) {
+  await applyPhase1Schema(exec);
+  await applyFtsSchema(exec);
 }
