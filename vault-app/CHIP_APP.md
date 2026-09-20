@@ -86,6 +86,14 @@ do **not** invent a "last time". The dad's reply goes back as `answer` (same
 call) and writes claim through the intake pipeline (harm/PII/venom rails
 apply).
 
+**Answer → claim:** the dad's reply goes back as `answer` on the same call
+and becomes exactly **one** claim event (`notes: "Return: how'd it go"`,
+or `"Return: cold ask follow-up"` when the Next was a cold ask;
+`raw_quote` = the harm/PII/venom-stripped answer — harm means nothing is
+stored and `written: 0`). Response adds `written: 0|1`; no `answer` sent →
+no claim write and no `written` key. A present-but-blank `answer` → 400.
+Never verified — Exhibit never sees these rows.
+
 **Cold-ask hook:** when the Next was a cold ask, Chip stores it on state at
 send time via `PUT /vault/state`:
 

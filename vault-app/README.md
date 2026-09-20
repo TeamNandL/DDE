@@ -158,7 +158,7 @@ Off unless you start it. Product bots call these Phase 1 routes:
 | --- | --- | --- |
 | `POST` | `/vault/intake` | `{ dad_id, text }` → `{ written, chase }`; with `make_notice: true` also `{ noticed_text, event_id }` |
 | `POST` | `/vault/notice` | `{ dad_id, event_id? }` → `{ noticed_text, event_id }` (no `event_id` → latest event; pipe stays `claim`) |
-| `POST` | `/vault/return` | `{ dad_id, answer? }` → `{ last_next, line, progress_line, written?, chase? }` (`line: null` when no Next; `answer` writes claim via the intake pipeline) |
+| `POST` | `/vault/return` | `{ dad_id, answer? }` → `{ last_next, line, progress_line, written? }` (`line: null` when no Next; `answer` becomes ONE claim event on the return beat — harm/PII/venom rails, `written: 0|1`; blank answer → 400) |
 | `POST` | `/vault/missing/fill` | `{ dad_id, answer }` → `{ written, missing_one, progress_line }` (closes `missing[0]` as one claim event, bumps `this_week_done` when a total is set; empty checklist → `written: 0`, nothing invented; harm/PII/venom rails apply to the answer) |
 | `POST` | `/vault/missing/seed` | `{ dad_id, pack? }` → `{ written, missing_one, progress_line }` (empty checklist only: seeds 5 PII-safe kids-facts blanks, counters 5/0 only when both were null; non-empty → `written: 0`, no overwrite) |
 | `POST` | `/vault/provision` | `{ dad_id? }` → `{ dad_id, token }` (**only** create path; opaque token; **hash** persisted) |

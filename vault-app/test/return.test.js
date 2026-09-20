@@ -106,7 +106,8 @@ test("return loop: vent → Next → return line → answer writes claim; last_n
     assert.equal(state.data.last_next, ret.data.last_next);
     assert.ok(state.data.last_next_at);
 
-    // Answer writes claim through the same pipeline (venom stripped too).
+    // Answer becomes exactly ONE claim event on the return beat (harm →
+    // PII → venom rails still apply to what gets stored).
     const answer = await jsonReq(
       s.base,
       "POST",
@@ -119,13 +120,15 @@ test("return loop: vent → Next → return line → answer writes claim; last_n
       { token },
     );
     assert.equal(answer.status, 200);
-    assert.ok(answer.data.written >= 1);
+    assert.equal(answer.data.written, 1);
     const events = await s.vault.listEvents(dad_id);
-    assert.equal(events.length, eventsBefore + answer.data.written);
-    const newest = events.find((e) => e.event_type === "denied_visit");
-    assert.ok(newest, "answer produced a claim event");
+    assert.equal(events.length, eventsBefore + 1);
+    const newest = events.find((e) => /^Return: how'd it go/.test(e.notes ?? ""));
+    assert.ok(newest, "answer produced the return claim event");
+    assert.equal(newest.event_type, "other");
     assert.equal(newest.pipe, "claim");
     assert.doesNotMatch(newest.raw_quote ?? "", /on purpose/, "venom stripped from answer");
+    assert.match(newest.raw_quote ?? "", /cancelled the visit again/);
 
     // Claim answers never reach the verified export.
     const verified = await jsonReq(

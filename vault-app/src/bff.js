@@ -117,11 +117,15 @@ export function makeBff(vault, opts = {}) {
       return out;
     },
 
-    // POST /vault/return {dad_id, answer?} -> {last_next, line, written?, chase?}
+    // POST /vault/return {dad_id, answer?}
+    //   -> {last_next, line, progress_line, written?}
     // Return loop: stamps state.last_next from the current One Next and hands
     // Chip the greeting line ({line: null} when no Next — nothing invented).
-    // An answer runs the SAME intake pipeline (harm → PII → venom → claim
-    // write → chase) — the dad's answer is a claim, never verified.
+    // An answer rides the intake rails — harm first (heard → discarded,
+    // written:0), then PII strip, then venom strip — and becomes exactly ONE
+    // claim event ('other', notes name the return beat, raw_quote = the
+    // stripped answer). Never verified. No answer → no claim write, no
+    // written key (existing behavior).
     async postVaultReturn({ dad_id, answer }, opts = {}) {
       const state = await requireDad(dad_id);
       const { last_next, last_next_kind, last_ask_summary } = await vault.beginReturn(dad_id);
@@ -135,9 +139,27 @@ export function makeBff(vault, opts = {}) {
       // the progress fields, so the pre-stamp state is accurate).
       const out = { last_next, line, progress_line: progressChipLine(state) };
       if (typeof answer === "string" && answer.trim()) {
-        const { written, chase } = await extract(vault, dad_id, answer, opts);
-        out.written = written;
-        out.chase = chase;
+        if (harmCheck(answer)) {
+          // §4 rail: zero rows, zero retention, zero log lines.
+          out.written = 0;
+        } else {
+          const cold = stripVenom(stripPii(answer).text).trim();
+          const rec = await vault.insertEvent(dad_id, {
+            event_type: "other",
+            occurred_at: opts.referenceDate
+              ? new Date(opts.referenceDate).toISOString()
+              : new Date().toISOString(),
+            pipe: "claim",
+            raw_quote: cold || null,
+            notes:
+              last_next_kind === "cold_ask"
+                ? "Return: cold ask follow-up"
+                : "Return: how'd it go",
+            kids: [],
+          });
+          out.written = 1;
+          log("return.answer", { dad: dad_id, event: rec.id });
+        }
       }
       log("return", {
         dad: dad_id,

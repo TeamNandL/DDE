@@ -205,9 +205,18 @@ export async function handleBffRequest(bff, req, url, body) {
   if (method === "POST" && path === "/vault/return") {
     const dad_id = requireDadId(body.dad_id);
     await gateDad(bff, req, dad_id);
-    const answer = typeof body.answer === "string" ? body.answer : "";
+    // Absent answer = greeting only; a PRESENT answer must carry words.
+    let answer;
+    if (body.answer !== undefined && body.answer !== null) {
+      if (typeof body.answer !== "string" || !body.answer.trim()) {
+        const err = new Error("answer must be a non-empty string");
+        err.status = 400;
+        throw err;
+      }
+      answer = body.answer;
+    }
     // Log hygiene: ids/flags only — never the line or the answer.
-    log("http.return", { dad: dad_id, answered: Boolean(answer.trim()) });
+    log("http.return", { dad: dad_id, answered: Boolean(answer) });
     return { status: 200, body: await bff.postVaultReturn({ dad_id, answer }) };
   }
 
