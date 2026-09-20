@@ -13,7 +13,7 @@
 // Rule (§5): there is NO endpoint that returns claim rows to Reporting.
 
 import { randomUUID } from "node:crypto";
-import { extract } from "./extract.js";
+import { extract, harmCheck, stripVenom } from "./extract.js";
 import { log } from "./logger.js";
 import { stripPii } from "./pii.js";
 import { clampProgressPatch, progressChipLine, progressLine, softGrade } from "./progress.js";
@@ -132,6 +132,54 @@ export function makeBff(vault, opts = {}) {
         answered: Boolean(typeof answer === "string" && answer.trim()),
       });
       return out;
+    },
+
+    // POST /vault/missing/fill {dad_id, answer}
+    //   -> {written, missing_one, progress_line}
+    // Chip asked about missing[0]; the dad's answer closes it. The answer
+    // rides the same rails as intake: harm first (heard → discarded,
+    // nothing shifted), then PII strip, then venom strip. The closed item
+    // becomes ONE claim event ('other', notes name the item, raw_quote =
+    // the stripped answer) — simplest durable path, never verified.
+    // this_week_done bumps only when a total is set and not yet reached.
+    async postMissingFill({ dad_id, answer }, opts = {}) {
+      const state = await requireDad(dad_id);
+      const missing = state.missing ?? [];
+      if (missing.length === 0) {
+        // Empty checklist: nothing to close, nothing invented.
+        return { written: 0, missing_one: null, progress_line: null };
+      }
+      if (harmCheck(answer)) {
+        // §4 rail: zero rows, zero retention, nothing shifted or bumped.
+        return {
+          written: 0,
+          missing_one: stripPii(String(missing[0])).text,
+          progress_line: progressChipLine(state),
+        };
+      }
+      const cold = stripVenom(stripPii(answer).text).trim();
+      const item = stripPii(String(missing[0])).text;
+      const rec = await vault.insertEvent(dad_id, {
+        event_type: "other",
+        occurred_at: opts.referenceDate
+          ? new Date(opts.referenceDate).toISOString()
+          : new Date().toISOString(),
+        pipe: "claim",
+        raw_quote: cold || null,
+        notes: `Checklist item closed: ${item}`,
+        kids: [],
+      });
+      const patch = { missing: missing.slice(1) };
+      const total = state.this_week_total ?? null;
+      const done = state.this_week_done ?? 0;
+      if (total !== null && done < total) patch.this_week_done = done + 1;
+      const newState = await vault.updateState(dad_id, patch);
+      log("missing.fill", { dad: dad_id, event: rec.id, left: patch.missing.length });
+      return {
+        written: 1,
+        missing_one: newState.missing?.[0] ? stripPii(String(newState.missing[0])).text : null,
+        progress_line: progressChipLine(newState),
+      };
     },
 
     // POST /vault/notice {dad_id, event_id?} -> {noticed_text, event_id}

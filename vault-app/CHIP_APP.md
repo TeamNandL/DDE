@@ -122,6 +122,25 @@ say nothing extra, invent nothing. Counters set via
 done 0–total; `missing[]` caps at 7 short items). Grade is encouragement
 only — never shame.
 
+### 6) Fill one Missing (dad answers the checklist ask)
+
+```
+POST /vault/missing/fill
+Authorization: Bearer <token>
+Content-Type: application/json
+{ "dad_id": "<uuid>", "answer": "<what the dad says>" }
+
+→ 200 { "written": 1, "missing_one": "<next item>" | null,
+        "progress_line": "2 of 3 this week; still open: …" | null }
+→ 200 { "written": 0, "missing_one": null, "progress_line": null }  // empty checklist
+```
+
+Closes `missing[0]` (the item Chip asked about) as one claim event; the
+answer rides the intake rails (harm → discarded + nothing shifted; PII and
+venom stripped before storage). `this_week_done` bumps by one only when a
+total is set and not yet reached. Chip then speaks `progress_line` and asks
+about the new `missing_one`, or moves on when null.
+
 ### Auth header
 
 `Authorization: Bearer <token>` (preferred) or `X-DDE-Token: <token>`.
