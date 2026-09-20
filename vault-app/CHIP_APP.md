@@ -185,6 +185,24 @@ nulls mean say nothing (never invented). `return_line` is the same
 greeting `POST /vault/return` gives, but this GET **never stamps
 `last_next`** — still call the return POST for the loop itself.
 
+### 9) Cold draft store (draft ≠ send)
+
+```
+POST /vault/comms/draft
+{ "dad_id": "<uuid>", "body": "<cold ask text>", "kind"?: "cold_ask" }
+→ 200 { "written": 1, "draft_id": "<uuid>", "body": "<stripped>" }
+→ 200 { "written": 0 }        // harm heard, or nothing survived the strips
+→ 400 empty body / unknown kind
+
+GET /vault/comms/drafts?dad_id=<uuid>
+→ 200 [ { "draft_id", "body", "kind", "created_at" } ]   // drafts ONLY
+```
+
+Drafts are **never sent and never verified** (direction `draft`, no
+`sent_at`, claim pipe) — there is **no send endpoint** for drafts; sending
+stays a separate human decision via `/vault/comms/cold`. Harm → PII →
+venom rails run before anything is stored.
+
 ### Auth header
 
 `Authorization: Bearer <token>` (preferred) or `X-DDE-Token: <token>`.

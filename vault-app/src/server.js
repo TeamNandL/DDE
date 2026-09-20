@@ -43,6 +43,8 @@ export const PHASE1_ROUTES = [
   "GET /vault/progress",
   "GET /vault/chip_entry",
   "POST /vault/comms/cold",
+  "POST /vault/comms/draft",
+  "GET /vault/comms/drafts",
   "POST /vault/comms/pull",
   "GET /vault/export/verified",
   "GET /vault/search",
@@ -312,6 +314,29 @@ export async function handleBffRequest(bff, req, url, body) {
     }
     log("http.comms.cold", { dad: dad_id });
     return { status: 200, body: await bff.postCommsCold(body) };
+  }
+
+  if (method === "POST" && path === "/vault/comms/draft") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    if (typeof body.body !== "string" || !body.body.trim()) {
+      const err = new Error("body is required");
+      err.status = 400;
+      throw err;
+    }
+    // Log hygiene: ids only — never the draft text.
+    log("http.comms.draft", { dad: dad_id });
+    return {
+      status: 200,
+      body: await bff.postCommsDraft({ dad_id, body: body.body, kind: body.kind }),
+    };
+  }
+
+  if (method === "GET" && path === "/vault/comms/drafts") {
+    const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
+    await gateDad(bff, req, dad_id);
+    log("http.comms.drafts", { dad: dad_id });
+    return { status: 200, body: await bff.getCommsDrafts({ dad_id }) };
   }
 
   if (method === "POST" && path === "/vault/comms/pull") {

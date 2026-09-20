@@ -361,6 +361,52 @@ export function makeBff(vault, opts = {}) {
       return { id: rec.id };
     },
 
+    // POST /vault/comms/draft {dad_id, body, kind?} -> {written, draft_id, body}
+    // Cold draft store — draft ≠ send. Harm first (heard → discarded,
+    // written:0, no row, no log line), then PII strip, then venom strip;
+    // the draft lands as direction='draft', sent_at null, pipe='claim' —
+    // never sent, never verified. NO send endpoint exists for drafts.
+    async postCommsDraft({ dad_id, body, kind }) {
+      await requireDad(dad_id);
+      if (kind !== undefined && kind !== null && kind !== "cold_ask") {
+        const err = new Error("unknown draft kind");
+        err.status = 400;
+        throw err;
+      }
+      if (harmCheck(body)) {
+        return { written: 0 };
+      }
+      const cold = stripVenom(stripPii(body).text).trim();
+      if (!cold) {
+        // Nothing storable survived the strips (pure venom) — no row.
+        return { written: 0 };
+      }
+      const rec = await vault.insertCommunication(dad_id, {
+        direction: "draft",
+        channel: null,
+        body_cold: cold,
+        sent_at: null,
+        pipe: "claim",
+        draft_kind: kind ?? null,
+      });
+      log("comms.draft", { dad: dad_id, id: rec.id, kind: kind ?? "none" });
+      return { written: 1, draft_id: rec.id, body: cold };
+    },
+
+    // GET /vault/comms/drafts {dad_id} -> [{draft_id, body, kind, created_at}]
+    // Drafts ONLY — sent/pulled communications never appear here.
+    async getCommsDrafts({ dad_id }) {
+      await requireDad(dad_id);
+      const rows = await vault.listDrafts(dad_id);
+      log("comms.drafts.list", { dad: dad_id, drafts: rows.length });
+      return rows.map((r) => ({
+        draft_id: r.id,
+        body: r.body_cold ?? "",
+        kind: r.draft_kind ?? null,
+        created_at: r.created_at,
+      }));
+    },
+
     // POST /vault/comms/pull {dad_id, channel, source_ref, ...} -> {id}
     async postCommsPull({ dad_id, channel, source_ref, body_cold, sent_at }) {
       await requireDad(dad_id);

@@ -14,6 +14,7 @@ export const NOTICED_SCHEMA_PATH = resolve(here, "../../vault/004_noticed.sql");
 export const RETURN_SCHEMA_PATH = resolve(here, "../../vault/005_return.sql");
 export const PROGRESS_SCHEMA_PATH = resolve(here, "../../vault/006_progress.sql");
 export const COLD_ASK_SCHEMA_PATH = resolve(here, "../../vault/007_cold_ask.sql");
+export const DRAFTS_SCHEMA_PATH = resolve(here, "../../vault/008_drafts.sql");
 
 export function readPhase1SchemaSql() {
   return readFileSync(SCHEMA_PATH, "utf8");
@@ -37,6 +38,10 @@ export function readProgressSchemaSql() {
 
 export function readColdAskSchemaSql() {
   return readFileSync(COLD_ASK_SCHEMA_PATH, "utf8");
+}
+
+export function readDraftsSchemaSql() {
+  return readFileSync(DRAFTS_SCHEMA_PATH, "utf8");
 }
 
 // node-pg's extended protocol rejects multi-statement strings. The Phase 1
@@ -97,7 +102,15 @@ export async function applyColdAskSchema(exec) {
   }
 }
 
-/** Phase 1 tables + FTS + noticed + return-loop + progress + cold-ask fields. */
+export async function applyDraftsSchema(exec) {
+  const sql = readDraftsSchemaSql();
+  if (!sql.trim()) throw new Error("008_drafts.sql is empty");
+  for (const stmt of splitSqlStatements(sql)) {
+    await exec(stmt);
+  }
+}
+
+/** Phase 1 tables + FTS + noticed + return + progress + cold-ask + drafts. */
 export async function applyVaultSchema(exec) {
   await applyPhase1Schema(exec);
   await applyFtsSchema(exec);
@@ -105,4 +118,5 @@ export async function applyVaultSchema(exec) {
   await applyReturnSchema(exec);
   await applyProgressSchema(exec);
   await applyColdAskSchema(exec);
+  await applyDraftsSchema(exec);
 }

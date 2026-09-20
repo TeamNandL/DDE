@@ -54,13 +54,26 @@ export class SqlVault {
     const id = randomUUID();
     await this.exec(
       `insert into communications (id, dad_id, pipe, source_ref, raw_quote,
-                                   direction, channel, body_cold, sent_at)
+                                   direction, channel, body_cold, sent_at, draft_kind)
        values (${lit(id)}, ${lit(dadId)}, ${lit(row.pipe)}, ${lit(row.source_ref ?? null)},
                ${lit(row.raw_quote ?? null)}, ${lit(row.direction)}, ${lit(row.channel ?? null)},
-               ${lit(row.body_cold ?? null)}, ${lit(row.sent_at ?? null)});`,
+               ${lit(row.body_cold ?? null)}, ${lit(row.sent_at ?? null)},
+               ${lit(row.draft_kind ?? null)});`,
     );
     log("comm.insert", { table: "communications", id, dad: dadId, pipe: row.pipe });
     return { id, dad_id: dadId, ...row };
+  }
+
+  // Drafts only — the never-sent communications (direction='draft').
+  async listDrafts(dadId) {
+    return (
+      (await this.exec(
+        `select id, dad_id, pipe, direction, body_cold, draft_kind, created_at
+           from communications
+          where dad_id = ${lit(dadId)} and direction = 'draft'
+          order by created_at;`,
+      )) ?? []
+    );
   }
 
   // statement → notice: stamp noticed_at/noticed_text on one of the dad's

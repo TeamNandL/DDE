@@ -26,7 +26,8 @@ const EVENT_TYPES = new Set([
   "other",
 ]);
 
-const DIRECTIONS = new Set(["outgoing", "incoming", "pull"]);
+// 'draft' = never sent (sent_at null) and never verified — draft ≠ send.
+const DIRECTIONS = new Set(["outgoing", "incoming", "pull", "draft"]);
 
 const DOC_TYPES = new Set([
   "statement",
@@ -104,10 +105,19 @@ export class Vault {
       channel: row.channel ?? null,
       body_cold: row.body_cold ?? null,
       sent_at: row.sent_at ?? null,
+      draft_kind: row.draft_kind ?? null,
     };
     this.communications.push(rec);
     log("comm.insert", { table: "communications", id: rec.id, dad: rec.dad_id, pipe: rec.pipe });
     return rec;
+  }
+
+  // Drafts only — the never-sent communications (direction='draft').
+  listDrafts(dadId) {
+    return this.communications
+      .filter((c) => c.dad_id === dadId && c.direction === "draft")
+      .slice()
+      .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
   }
 
   insertDocument(dadId, row) {
