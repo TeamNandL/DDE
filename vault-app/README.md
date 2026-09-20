@@ -105,6 +105,12 @@ npm test
 Log output from tests 1–8 lands in `test-output/run.log` for the hygiene grep
 (test 7 / §8 report).
 
+CI (`.github/workflows/test.yml`) runs both legs on every push and PR:
+memory (no `DATABASE_URL`, PG tests skip as BLOCKED) and the **full suite
+against a stock Postgres 16 service with zero skips** — the PG job fails if
+anything skipped, so a silently-BLOCKED leg can never read as green. The
+service credential is CI-throwaway; real `DATABASE_URL` stays host-side.
+
 ### Test 9 — one command
 
 Test 9 is **extract → BFF → SqlVault → node-postgres → Postgres** only.
