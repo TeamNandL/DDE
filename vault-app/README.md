@@ -128,6 +128,16 @@ Intended rented target: Supabase project **dde-vault**. Without
 `DATABASE_URL`, or where the network cannot reach the host, test 9
 **skips** and counts as **BLOCKED**, not passed.
 
+The PG legs (test 9, PG search, PG progress persist) have been proven
+green against stock Postgres 16. Note: `003_fts.sql` originally used
+`array_to_string` inside generated columns — that function is STABLE, not
+IMMUTABLE, so **schema apply crashed on any fresh stock Postgres at boot**
+(and a host like Railway then keeps serving the previous build, which
+looks like writes silently not persisting). 003 now ships an IMMUTABLE
+`dde_join_words` wrapper; the apply is clean and idempotent on fresh and
+existing databases alike. If a deploy ever crash-looped on this, deploying
+tip clears it.
+
 
 ## Vault search (FTS)
 
