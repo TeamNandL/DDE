@@ -16,6 +16,7 @@ import { randomUUID } from "node:crypto";
 import { extract } from "./extract.js";
 import { log } from "./logger.js";
 import { stripPii } from "./pii.js";
+import { clampProgressPatch, progressLine, softGrade } from "./progress.js";
 import { createMemoryTokenStore, hashToken } from "./tokens.js";
 import { parseSearchOpts } from "./search.js";
 
@@ -147,14 +148,33 @@ export function makeBff(vault, opts = {}) {
       return { dad_id: id, token };
     },
 
-    // PUT /vault/state {dad_id, phase?, this_week?, missing?, next_action?}
-    // Update-only — missing dad → 404 (no silent upsert).
+    // PUT /vault/state {dad_id, phase?, this_week?, missing?, next_action?,
+    //                   this_week_done?, this_week_total?}
+    // Update-only — missing dad → 404 (no silent upsert). Progress rails
+    // clamp here, once, for both stores: total 3..7, done 0..total,
+    // missing ≤ 7 short strings.
     async putVaultState({ dad_id, ...patch }) {
       await requireDad(dad_id);
+      const clamped = clampProgressPatch(patch);
       if (typeof vault.updateState === "function") {
-        return vault.updateState(dad_id, patch);
+        return vault.updateState(dad_id, clamped);
       }
-      return vault.upsertState(dad_id, patch);
+      return vault.upsertState(dad_id, clamped);
+    },
+
+    // GET /vault/progress {dad_id} -> {line, missing_one, grade}
+    // Plain Chip speech, read-only. line null until both counters exist;
+    // grade is warm or null — never shame; missing_one = first checklist
+    // item or null (empty missing is fine).
+    async getVaultProgress({ dad_id }) {
+      const state = await requireDad(dad_id);
+      const out = {
+        line: progressLine(state),
+        missing_one: state.missing?.[0] ?? null,
+        grade: softGrade(state),
+      };
+      log("progress", { dad: dad_id, has_line: Boolean(out.line), has_grade: Boolean(out.grade) });
+      return out;
     },
 
     // POST /vault/comms/cold {dad_id, body_cold, channel} -> {id}

@@ -227,6 +227,8 @@ export class Vault {
       next_action: patch.next_action ?? existing?.next_action ?? null,
       last_next: patch.last_next ?? existing?.last_next ?? null,
       last_next_at: patch.last_next_at ?? existing?.last_next_at ?? null,
+      this_week_done: patch.this_week_done ?? existing?.this_week_done ?? null,
+      this_week_total: patch.this_week_total ?? existing?.this_week_total ?? null,
       updated_at: new Date().toISOString(),
     };
     this.state.set(dadId, rec);
@@ -298,7 +300,9 @@ export class Vault {
       throw err;
     }
     const missing = [...(existing.missing ?? [])];
-    if (!missing.includes(item)) missing.push(item);
+    // Short-checklist rail: missing holds at most 7 items — a full list
+    // takes no more chase items until something clears.
+    if (!missing.includes(item) && missing.length < 7) missing.push(item);
     // Edge needs exactly one next_action; the chase item becomes it when
     // nothing else is queued.
     const next_action = existing.next_action ?? item;

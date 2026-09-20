@@ -86,6 +86,23 @@ do **not** invent a "last time". The dad's reply goes back as `answer` (same
 call) and writes claim through the intake pipeline (harm/PII/venom rails
 apply).
 
+### 5) Soft progress (this week only)
+
+```
+GET /vault/progress?dad_id=<uuid>
+Authorization: Bearer <token>
+
+→ 200 { "line": "3 of 5 this week" | null,
+        "missing_one": "<first checklist item>" | null,
+        "grade": "<one warm line>" | null }
+```
+
+Chip says `line` and `grade` verbatim when present; all three can be null —
+say nothing extra, invent nothing. Counters set via
+`PUT /vault/state { this_week_done, this_week_total }` (total clamps 3–7,
+done 0–total; `missing[]` caps at 7 short items). Grade is encouragement
+only — never shame.
+
 ### Auth header
 
 `Authorization: Bearer <token>` (preferred) or `X-DDE-Token: <token>`.

@@ -16,6 +16,7 @@ COPY vault/001_schema.sql /app/vault/001_schema.sql
 COPY vault/003_fts.sql /app/vault/003_fts.sql
 COPY vault/004_noticed.sql /app/vault/004_noticed.sql
 COPY vault/005_return.sql /app/vault/005_return.sql
+COPY vault/006_progress.sql /app/vault/006_progress.sql
 
 WORKDIR /app/vault-app
 COPY vault-app/package.json vault-app/package-lock.json ./

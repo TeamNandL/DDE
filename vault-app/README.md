@@ -31,6 +31,11 @@ No real case data. No secrets in git.
   go?") — no tokens/URLs in the line, `line: null` when there is no Next
   (never invented); the dad's `answer` runs the same intake pipeline and
   writes claim
+- Soft progress: `state.this_week_done` / `this_week_total` (total clamps
+  3–7, done 0–total; `missing[]` capped at 7 short strings) and
+  `GET /vault/progress` → `{line: "3 of 5 this week", missing_one, grade}` —
+  plain speech, nulls when nothing to say, grade is warm or absent (never
+  shame)
 - `verified_export` is the only read surface for Reporting; it never returns
   claim rows
 - `month_summary` gate: `pipe='verified'` only when every `source_ref`
@@ -75,6 +80,7 @@ Schema lives next to the app, not inside it:
 - `vault/003_fts.sql` — generated `search_tsv` + GIN indexes (applied with 001)
 - `vault/004_noticed.sql` — `events.noticed_at` / `events.noticed_text` (applied with 001)
 - `vault/005_return.sql` — `state.last_next` / `state.last_next_at` (applied with 001)
+- `vault/006_progress.sql` — `state.this_week_done` / `state.this_week_total` (applied with 001)
 
 ## Tests
 
@@ -141,7 +147,8 @@ Off unless you start it. Product bots call these Phase 1 routes:
 
 **Auth (minimal):** After provision, send `Authorization: Bearer <token>` or `X-DDE-Token: <token>` on intake/state/comms/export. Missing/wrong → **401**; token for another dad → **403**; unprovisioned dad → **404** `unknown dad`. Writes never silent-create state. **Durable tokens:** SHA-256 hash only in Postgres (`dde_provision_tokens`) when vault is on `DATABASE_URL`, else `.dde-tokens.json` (override with `DDE_TOKENS_PATH`).
 | `GET` | `/vault/state` | `?dad_id=` → state row; **404** `{ "error": "unknown dad" }` if none (read-only) |
-| `PUT` | `/vault/state` | `{ dad_id, phase?, this_week?, missing?, next_action? }` |
+| `PUT` | `/vault/state` | `{ dad_id, phase?, this_week?, missing?, next_action?, this_week_done?, this_week_total? }` (total clamps 3–7, done 0–total, missing ≤ 7 short strings) |
+| `GET` | `/vault/progress` | `?dad_id=` → `{ line, missing_one, grade }` (plain speech; nulls when nothing to say) |
 | `POST` | `/vault/comms/cold` | `{ dad_id, body_cold, channel }` → `{ id }` |
 | `POST` | `/vault/comms/pull` | `{ dad_id, channel, source_ref, body_cold?, sent_at? }` → `{ id }` |
 | `GET` | `/vault/export/verified` | `?dad_id=` → verified rows only |
@@ -191,14 +198,15 @@ DATABASE_URL=... npm run schema:apply
 ```
 
 Applies `vault/001_schema.sql` + `vault/003_fts.sql` + `vault/004_noticed.sql`
-+ `vault/005_return.sql` idempotently. Leaves RLS disabled. The BFF store
-factory applies the same files on boot, so a deployed host (Railway / Fly /
-Render / Docker) picks up new migrations automatically on next start. To
-apply by hand instead:
++ `vault/005_return.sql` + `vault/006_progress.sql` idempotently. Leaves RLS
+disabled. The BFF store factory applies the same files on boot, so a deployed
+host (Railway / Fly / Render / Docker) picks up new migrations automatically
+on next start. To apply by hand instead:
 
 ```
 psql "$DATABASE_URL" -f vault/004_noticed.sql
 psql "$DATABASE_URL" -f vault/005_return.sql
+psql "$DATABASE_URL" -f vault/006_progress.sql
 ```
 
 ## Rails (non-negotiable)

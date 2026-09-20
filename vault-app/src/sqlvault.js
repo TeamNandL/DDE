@@ -109,6 +109,7 @@ export class SqlVault {
     await this.exec(
       `update state set
          missing = case when ${lit(item)} = any(state.missing)
+                          or cardinality(state.missing) >= 7
                         then state.missing
                         else array_append(state.missing, ${lit(item)}::text) end,
          next_action = coalesce(state.next_action, ${lit(item)}),
@@ -149,6 +150,8 @@ export class SqlVault {
          this_week = coalesce(${lit(patch.this_week ?? null)}, state.this_week),
          missing = ${patch.missing ? litArr(patch.missing) : "state.missing"},
          next_action = coalesce(${lit(patch.next_action ?? null)}, state.next_action),
+         this_week_done = coalesce(${lit(patch.this_week_done ?? null)}::integer, state.this_week_done),
+         this_week_total = coalesce(${lit(patch.this_week_total ?? null)}::integer, state.this_week_total),
          updated_at = now()
        where dad_id = ${lit(dadId)};`,
     );
@@ -159,7 +162,7 @@ export class SqlVault {
   async getState(dadId) {
     const rows = await this.exec(
       `select dad_id, phase, this_week, missing, next_action, last_next,
-              last_next_at, updated_at
+              last_next_at, this_week_done, this_week_total, updated_at
          from state where dad_id = ${lit(dadId)};`,
     );
     return rows?.[0] ?? null;
