@@ -87,6 +87,27 @@ export function progressLine(state) {
   return stripPii(`${done} of ${total} this week`).text;
 }
 
+/**
+ * The ONE ADHD-short progress line for Chip:
+ *   "3 of 5 this week"                              (counters only)
+ *   "3 of 5 this week; still open: pull OFW thread" (+ first open item)
+ *   null                                            (no counters — never
+ *                                                    invent, never shame;
+ *                                                    missing alone is not
+ *                                                    a counter line)
+ * PII-stripped end to end; at most one open item is ever spoken.
+ */
+export function progressChipLine(state) {
+  const line = progressLine(state);
+  if (!line) return null;
+  const first = state?.missing?.[0];
+  if (first) {
+    const one = stripPii(String(first)).text.trim();
+    if (one) return stripPii(`${line}; still open: ${one}`).text;
+  }
+  return line;
+}
+
 // Soft grade — one warm line about the last action. Encouragement only:
 // no counts of what's missing, no "only", no "behind", no shame. Null when
 // there is nothing to grade.

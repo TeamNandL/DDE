@@ -177,7 +177,12 @@ test("empty missing ok; fresh dad progress → nulls, nothing invented", async (
 
     const fresh = await jsonReq(s.base, "GET", `/vault/progress?dad_id=${dad_id}`, null, { token });
     assert.equal(fresh.status, 200);
-    assert.deepEqual(fresh.data, { line: null, missing_one: null, grade: null });
+    assert.deepEqual(fresh.data, {
+      line: null,
+      missing_one: null,
+      grade: null,
+      progress_line: null,
+    });
 
     const put = await jsonReq(
       s.base,

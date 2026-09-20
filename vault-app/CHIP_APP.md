@@ -107,8 +107,14 @@ Authorization: Bearer <token>
 
 → 200 { "line": "3 of 5 this week" | null,
         "missing_one": "<first checklist item>" | null,
-        "grade": "<one warm line>" | null }
+        "grade": "<one warm line>" | null,
+        "progress_line": "3 of 5 this week; still open: <one item>" | null }
 ```
+
+**`progress_line` is the one to speak** — ADHD-short, counters plus at
+most one open item, PII-stripped. Null → say nothing (no counters set;
+never invent). It also rides the `POST /vault/return` payload so Chip can
+say it once on return, after the greeting `line`.
 
 Chip says `line` and `grade` verbatim when present; all three can be null —
 say nothing extra, invent nothing. Counters set via

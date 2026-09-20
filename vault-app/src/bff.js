@@ -16,7 +16,7 @@ import { randomUUID } from "node:crypto";
 import { extract } from "./extract.js";
 import { log } from "./logger.js";
 import { stripPii } from "./pii.js";
-import { clampProgressPatch, progressLine, softGrade } from "./progress.js";
+import { clampProgressPatch, progressChipLine, progressLine, softGrade } from "./progress.js";
 import { createMemoryTokenStore, hashToken } from "./tokens.js";
 import { parseSearchOpts } from "./search.js";
 
@@ -110,14 +110,17 @@ export function makeBff(vault, opts = {}) {
     // An answer runs the SAME intake pipeline (harm → PII → venom → claim
     // write → chase) — the dad's answer is a claim, never verified.
     async postVaultReturn({ dad_id, answer }, opts = {}) {
-      await requireDad(dad_id);
+      const state = await requireDad(dad_id);
       const { last_next, last_next_kind, last_ask_summary } = await vault.beginReturn(dad_id);
       // Cold-ask hook: prefer the ask summary; otherwise the generic line.
       const line =
         last_next_kind === "cold_ask" && last_ask_summary
           ? coldAskLine(last_ask_summary)
           : returnLine(last_next);
-      const out = { last_next, line };
+      // Optional second beat for Chip: the soft-progress line, spoken once.
+      // Null when there is nothing to say (return stamping never alters
+      // the progress fields, so the pre-stamp state is accurate).
+      const out = { last_next, line, progress_line: progressChipLine(state) };
       if (typeof answer === "string" && answer.trim()) {
         const { written, chase } = await extract(vault, dad_id, answer, opts);
         out.written = written;
@@ -188,6 +191,9 @@ export function makeBff(vault, opts = {}) {
         line: progressLine(state),
         missing_one: firstMissing ? stripPii(String(firstMissing)).text : null,
         grade: softGrade(state),
+        // The one ADHD-short line Chip speaks: counters + at most one open
+        // item, or null — never invented.
+        progress_line: progressChipLine(state),
       };
       log("progress", { dad: dad_id, has_line: Boolean(out.line), has_grade: Boolean(out.grade) });
       return out;
