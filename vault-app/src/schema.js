@@ -1,5 +1,5 @@
 // Apply Phase 1 schema (vault/001_schema.sql) + FTS (vault/003_fts.sql)
-// + noticed fields (vault/004_noticed.sql).
+// + noticed fields (vault/004_noticed.sql) + return loop (vault/005_return.sql).
 // Never apply vault/002_rls_plan.sql here — RLS stays documented, not enabled.
 
 import { readFileSync } from "node:fs";
@@ -11,6 +11,7 @@ export const SCHEMA_PATH = resolve(here, "../../vault/001_schema.sql");
 export const RLS_PLAN_PATH = resolve(here, "../../vault/002_rls_plan.sql");
 export const FTS_SCHEMA_PATH = resolve(here, "../../vault/003_fts.sql");
 export const NOTICED_SCHEMA_PATH = resolve(here, "../../vault/004_noticed.sql");
+export const RETURN_SCHEMA_PATH = resolve(here, "../../vault/005_return.sql");
 
 export function readPhase1SchemaSql() {
   return readFileSync(SCHEMA_PATH, "utf8");
@@ -22,6 +23,10 @@ export function readFtsSchemaSql() {
 
 export function readNoticedSchemaSql() {
   return readFileSync(NOTICED_SCHEMA_PATH, "utf8");
+}
+
+export function readReturnSchemaSql() {
+  return readFileSync(RETURN_SCHEMA_PATH, "utf8");
 }
 
 // node-pg's extended protocol rejects multi-statement strings. The Phase 1
@@ -58,9 +63,18 @@ export async function applyNoticedSchema(exec) {
   }
 }
 
-/** Phase 1 tables + FTS generated columns / GIN indexes + noticed fields. */
+export async function applyReturnSchema(exec) {
+  const sql = readReturnSchemaSql();
+  if (!sql.trim()) throw new Error("005_return.sql is empty");
+  for (const stmt of splitSqlStatements(sql)) {
+    await exec(stmt);
+  }
+}
+
+/** Phase 1 tables + FTS + noticed fields + return-loop fields. */
 export async function applyVaultSchema(exec) {
   await applyPhase1Schema(exec);
   await applyFtsSchema(exec);
   await applyNoticedSchema(exec);
+  await applyReturnSchema(exec);
 }

@@ -225,6 +225,8 @@ export class Vault {
       this_week: patch.this_week ?? existing?.this_week ?? null,
       missing: patch.missing ?? existing?.missing ?? [],
       next_action: patch.next_action ?? existing?.next_action ?? null,
+      last_next: patch.last_next ?? existing?.last_next ?? null,
+      last_next_at: patch.last_next_at ?? existing?.last_next_at ?? null,
       updated_at: new Date().toISOString(),
     };
     this.state.set(dadId, rec);
@@ -245,6 +247,24 @@ export class Vault {
 
   getState(dadId) {
     return this.state.get(dadId) ?? null;
+  }
+
+  // Return loop: stamp last_next = the current One Next, so "Last time: ___"
+  // reflects what the dad was actually asked. Empty next_action → nothing is
+  // stamped and last_next comes back null — a "last time" is never invented.
+  beginReturn(dadId) {
+    const existing = this.getState(dadId);
+    if (!existing) {
+      const err = new Error("unknown dad");
+      err.status = 404;
+      throw err;
+    }
+    const last_next = existing.next_action ?? null;
+    if (last_next) {
+      this.upsertState(dadId, { last_next, last_next_at: new Date().toISOString() });
+    }
+    log("state.return", { table: "state", dad: dadId, has_next: Boolean(last_next) });
+    return { last_next };
   }
 
   // POST /vault/provision — insert-only. Never used by GET /vault/state.

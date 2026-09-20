@@ -55,6 +55,26 @@ Content-Type: application/json
 
 Then re-`GET /vault/state` — chase items land in `missing`; `next_action` is the One Next.
 
+### 4) Return loop (dad comes back)
+
+```
+POST /vault/return
+Authorization: Bearer <token>
+Content-Type: application/json
+{ "dad_id": "<uuid>", "answer"?: "<what the dad says>" }
+
+→ 200 { "last_next": "<the One Next that was pending>" | null,
+        "line": "Last time: <last_next>. How'd it go?" | null,
+        "written"?: N, "chase"?: [ … ] }   // only when answer sent
+```
+
+Chip flow: on return, POST with no `answer` → say `line` verbatim. **`line`
+is plain speech — it never contains a token, URL, or dad_id; Chip must not
+append them.** `line: null` means there is no pending Next — greet normally,
+do **not** invent a "last time". The dad's reply goes back as `answer` (same
+call) and writes claim through the intake pipeline (harm/PII/venom rails
+apply).
+
 ### Auth header
 
 `Authorization: Bearer <token>` (preferred) or `X-DDE-Token: <token>`.

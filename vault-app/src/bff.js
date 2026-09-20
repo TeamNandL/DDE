@@ -15,6 +15,7 @@
 import { randomUUID } from "node:crypto";
 import { extract } from "./extract.js";
 import { log } from "./logger.js";
+import { stripPii } from "./pii.js";
 import { createMemoryTokenStore, hashToken } from "./tokens.js";
 import { parseSearchOpts } from "./search.js";
 
@@ -22,6 +23,15 @@ function unknownDad() {
   const err = new Error("unknown dad");
   err.status = 404;
   return err;
+}
+
+// Return-loop greeting for Chip. Plain text only — never a token, URL, or
+// dad_id (Chip carries auth separately). Null when there is no Next: an
+// empty Next is never invented into a "last time". PII-stripped as a
+// guarantee even though next_action is chase text.
+export function returnLine(lastNext) {
+  if (!lastNext) return null;
+  return stripPii(`Last time: ${lastNext}. How'd it go?`).text;
 }
 
 /**
@@ -82,6 +92,28 @@ export function makeBff(vault, opts = {}) {
         out.noticed_text = noticed.noticed_text;
         out.event_id = noticed.event_id;
       }
+      return out;
+    },
+
+    // POST /vault/return {dad_id, answer?} -> {last_next, line, written?, chase?}
+    // Return loop: stamps state.last_next from the current One Next and hands
+    // Chip the greeting line ({line: null} when no Next — nothing invented).
+    // An answer runs the SAME intake pipeline (harm → PII → venom → claim
+    // write → chase) — the dad's answer is a claim, never verified.
+    async postVaultReturn({ dad_id, answer }, opts = {}) {
+      await requireDad(dad_id);
+      const { last_next } = await vault.beginReturn(dad_id);
+      const out = { last_next, line: returnLine(last_next) };
+      if (typeof answer === "string" && answer.trim()) {
+        const { written, chase } = await extract(vault, dad_id, answer, opts);
+        out.written = written;
+        out.chase = chase;
+      }
+      log("return", {
+        dad: dad_id,
+        has_next: Boolean(last_next),
+        answered: Boolean(typeof answer === "string" && answer.trim()),
+      });
       return out;
     },
 

@@ -34,6 +34,7 @@ const MAX_BODY = 64 * 1024;
 export const PHASE1_ROUTES = [
   "POST /vault/intake",
   "POST /vault/notice",
+  "POST /vault/return",
   "POST /vault/provision",
   "GET /vault/state",
   "PUT /vault/state",
@@ -196,6 +197,15 @@ export async function handleBffRequest(bff, req, url, body) {
         make_notice: body.make_notice === true,
       }),
     };
+  }
+
+  if (method === "POST" && path === "/vault/return") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    const answer = typeof body.answer === "string" ? body.answer : "";
+    // Log hygiene: ids/flags only — never the line or the answer.
+    log("http.return", { dad: dad_id, answered: Boolean(answer.trim()) });
+    return { status: 200, body: await bff.postVaultReturn({ dad_id, answer }) };
   }
 
   if (method === "POST" && path === "/vault/notice") {

@@ -158,10 +158,33 @@ export class SqlVault {
 
   async getState(dadId) {
     const rows = await this.exec(
-      `select dad_id, phase, this_week, missing, next_action, updated_at
+      `select dad_id, phase, this_week, missing, next_action, last_next,
+              last_next_at, updated_at
          from state where dad_id = ${lit(dadId)};`,
     );
     return rows?.[0] ?? null;
+  }
+
+  // Return loop: stamp last_next = current next_action (see vault.js twin).
+  // Empty next_action stamps nothing — a "last time" is never invented.
+  // Requires vault/005_return.sql.
+  async beginReturn(dadId) {
+    const existing = await this.getState(dadId);
+    if (!existing) {
+      const e = new Error("unknown dad");
+      e.status = 404;
+      throw e;
+    }
+    const last_next = existing.next_action ?? null;
+    if (last_next) {
+      await this.exec(
+        `update state set last_next = state.next_action, last_next_at = now(),
+                          updated_at = now()
+          where dad_id = ${lit(dadId)} and state.next_action is not null;`,
+      );
+    }
+    log("state.return", { table: "state", dad: dadId, has_next: Boolean(last_next) });
+    return { last_next };
   }
 
   // POST /vault/provision — insert-only (no ON CONFLICT). GET stays read-only.
