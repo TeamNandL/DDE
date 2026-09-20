@@ -17,6 +17,7 @@
 
 import { randomUUID } from "node:crypto";
 import { log } from "./logger.js";
+import { buildNoticeText } from "./pii.js";
 
 // SQL literal helpers. Values are embedded (not bound) because the emit
 // transport needs full statements; everything funnels through these quoters.
@@ -60,6 +61,41 @@ export class SqlVault {
     );
     log("comm.insert", { table: "communications", id, dad: dadId, pipe: row.pipe });
     return { id, dad_id: dadId, ...row };
+  }
+
+  // statement → notice: stamp noticed_at/noticed_text on one of the dad's
+  // events (latest by created_at when eventId is null). Pipe untouched —
+  // a noticed row stays 'claim' until verified. Requires vault/004_noticed.sql.
+  async noticeEvent(dadId, eventId = null) {
+    const where = eventId
+      ? `dad_id = ${lit(dadId)} and id = ${lit(eventId)}`
+      : `dad_id = ${lit(dadId)}`;
+    const rows = await this.exec(
+      `select id, dad_id, pipe, event_type, occurred_at, scheduled_at, location, notes
+         from events
+        where ${where}
+        order by created_at desc
+        limit 1;`,
+    );
+    const event = rows?.[0];
+    if (!event) {
+      const e = new Error("unknown event");
+      e.status = 404;
+      throw e;
+    }
+    const noticed_text = buildNoticeText(event);
+    const updated = await this.exec(
+      `update events set noticed_at = now(), noticed_text = ${lit(noticed_text)}
+        where id = ${lit(event.id)} and dad_id = ${lit(dadId)}
+        returning id, pipe, noticed_at;`,
+    );
+    log("event.notice", { table: "events", id: event.id, dad: dadId, pipe: event.pipe });
+    return {
+      event_id: event.id,
+      noticed_at: updated?.[0]?.noticed_at ?? new Date().toISOString(),
+      noticed_text,
+      pipe: event.pipe,
+    };
   }
 
   // Claim chase — update-only. Missing dad → 404 (no silent insert).
@@ -152,7 +188,8 @@ export class SqlVault {
     return (
       (await this.exec(
         `select id, dad_id, pipe, created_at, source_ref, raw_quote, event_type,
-                occurred_at, scheduled_at, location, kids, notes
+                occurred_at, scheduled_at, location, kids, notes,
+                noticed_at, noticed_text
            from events
           where dad_id = ${lit(dadId)}
           order by occurred_at;`,

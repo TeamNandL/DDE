@@ -4,4 +4,4 @@ vault-app/exports/
 .env
 .env.local
 .env.*.local
-
+.dde-tokens.json

@@ -69,11 +69,30 @@ export function makeBff(vault, opts = {}) {
       return true;
     },
 
-    // POST /vault/intake {dad_id, text} -> {written, chase} — Intake writes claim
-    // Requires provisioned dad — never creates state.
-    async postVaultIntake({ dad_id, text }, opts = {}) {
+    // POST /vault/intake {dad_id, text, make_notice?} -> {written, chase}
+    // — Intake writes claim. Requires provisioned dad — never creates state.
+    // make_notice=true additionally notices the first written event and adds
+    // {noticed_text, event_id}; the plain response shape is unchanged.
+    async postVaultIntake({ dad_id, text, make_notice }, opts = {}) {
       await requireDad(dad_id);
-      return extract(vault, dad_id, text, opts);
+      const { written, chase, event_ids = [] } = await extract(vault, dad_id, text, opts);
+      const out = { written, chase };
+      if (make_notice === true && event_ids.length > 0) {
+        const noticed = await vault.noticeEvent(dad_id, event_ids[0]);
+        out.noticed_text = noticed.noticed_text;
+        out.event_id = noticed.event_id;
+      }
+      return out;
+    },
+
+    // POST /vault/notice {dad_id, event_id?} -> {noticed_text, event_id}
+    // event_id omitted → the dad's latest event. Marks it noticed; pipe is
+    // untouched (claim until verified — Exhibit never sees claim-only rows).
+    async postVaultNotice({ dad_id, event_id }) {
+      await requireDad(dad_id);
+      const noticed = await vault.noticeEvent(dad_id, event_id ?? null);
+      log("notice", { dad: dad_id, event: noticed.event_id, pipe: noticed.pipe });
+      return { noticed_text: noticed.noticed_text, event_id: noticed.event_id };
     },
 
     // GET /vault/state {dad_id} -> state row — Edge / Front Door read (never creates)

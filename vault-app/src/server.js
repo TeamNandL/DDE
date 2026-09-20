@@ -33,6 +33,7 @@ const MAX_BODY = 64 * 1024;
 
 export const PHASE1_ROUTES = [
   "POST /vault/intake",
+  "POST /vault/notice",
   "POST /vault/provision",
   "GET /vault/state",
   "PUT /vault/state",
@@ -187,7 +188,31 @@ export async function handleBffRequest(bff, req, url, body) {
       throw err;
     }
     log("http.intake", { dad: dad_id });
-    return { status: 200, body: await bff.postVaultIntake({ dad_id, text }) };
+    return {
+      status: 200,
+      body: await bff.postVaultIntake({
+        dad_id,
+        text,
+        make_notice: body.make_notice === true,
+      }),
+    };
+  }
+
+  if (method === "POST" && path === "/vault/notice") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    let event_id = null;
+    if (body.event_id !== undefined && body.event_id !== null && body.event_id !== "") {
+      if (typeof body.event_id !== "string" || !UUID_RE.test(body.event_id)) {
+        const err = new Error("event_id must be a uuid");
+        err.status = 400;
+        throw err;
+      }
+      event_id = body.event_id;
+    }
+    // Log hygiene: ids only — never noticed_text.
+    log("http.notice", { dad: dad_id });
+    return { status: 200, body: await bff.postVaultNotice({ dad_id, event_id }) };
   }
 
   if (method === "GET" && path === "/vault/state") {

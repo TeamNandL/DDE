@@ -18,6 +18,14 @@ No real case data. No secrets in git.
 - Claim chase: count/frequency claims become a `state.missing` verify item —
   the number is never written as a structured field or verified row (the
   dad's own words stay in the claim row's `raw_quote` per §4)
+- PII stripped at intake (deterministic Phase-1): phones, emails, SSN/EIN
+  tax ids, numbered street addresses, account/routing numbers, kid school
+  ids are redacted before anything is stored — state/search/notice never
+  carry raw PII, and the stripped values never reach logs (counts only)
+- Notice: `POST /vault/notice` (or intake `make_notice=true`) produces a
+  cold, court-safe, PII-free `noticed_text` from a claim event and stamps
+  `noticed_at` — the row **stays `claim` until verified**, so Exhibit
+  (`verified_export` / `affidavit_support`) never picks it up on notice alone
 - `verified_export` is the only read surface for Reporting; it never returns
   claim rows
 - `month_summary` gate: `pipe='verified'` only when every `source_ref`
@@ -30,7 +38,8 @@ No real case data. No secrets in git.
 src/vault.js        in-memory tables + views + write gates (mirrors §3)
 src/sqlvault.js     Postgres-backed vault (same interface, async)
 src/store.js        opens memory or SqlVault from DATABASE_URL
-src/extract.js      middle layer (§4): harm → venom → fields → claim write → chase
+src/extract.js      middle layer (§4): harm → PII strip → venom → fields → claim write → chase
+src/pii.js          deterministic PII redaction + buildNoticeText (statement → notice)
 src/bff.js          thin BFF functions (§5) — seats never touch the vault
 src/tokens.js       durable provision tokens (hash-only; PG or .dde-tokens.json)
 src/server.js       optional HTTP for those functions (`npm run serve`)
@@ -56,6 +65,7 @@ Schema lives next to the app, not inside it:
 - `vault/001_schema.sql` — tables, checks, `verified_export` / `affidavit_support` views
 - `vault/002_rls_plan.sql` — **draft only, do not run in Phase 1**
 - `vault/003_fts.sql` — generated `search_tsv` + GIN indexes (applied with 001)
+- `vault/004_noticed.sql` — `events.noticed_at` / `events.noticed_text` (applied with 001)
 
 ## Tests
 
@@ -115,7 +125,8 @@ Off unless you start it. Product bots call these Phase 1 routes:
 
 | Method | Path | Body / query |
 | --- | --- | --- |
-| `POST` | `/vault/intake` | `{ dad_id, text }` → `{ written, chase }` |
+| `POST` | `/vault/intake` | `{ dad_id, text }` → `{ written, chase }`; with `make_notice: true` also `{ noticed_text, event_id }` |
+| `POST` | `/vault/notice` | `{ dad_id, event_id? }` → `{ noticed_text, event_id }` (no `event_id` → latest event; pipe stays `claim`) |
 | `POST` | `/vault/provision` | `{ dad_id? }` → `{ dad_id, token }` (**only** create path; opaque token; **hash** persisted) |
 
 **Auth (minimal):** After provision, send `Authorization: Bearer <token>` or `X-DDE-Token: <token>` on intake/state/comms/export. Missing/wrong → **401**; token for another dad → **403**; unprovisioned dad → **404** `unknown dad`. Writes never silent-create state. **Durable tokens:** SHA-256 hash only in Postgres (`dde_provision_tokens`) when vault is on `DATABASE_URL`, else `.dde-tokens.json` (override with `DDE_TOKENS_PATH`).
@@ -169,7 +180,14 @@ vault is the source of truth.
 DATABASE_URL=... npm run schema:apply
 ```
 
-Applies `vault/001_schema.sql` only. Leaves RLS disabled.
+Applies `vault/001_schema.sql` + `vault/003_fts.sql` + `vault/004_noticed.sql`
+idempotently. Leaves RLS disabled. The BFF store factory applies the same
+files on boot, so a deployed host (Railway / Fly / Render / Docker) picks up
+`004_noticed.sql` automatically on next start. To apply by hand instead:
+
+```
+psql "$DATABASE_URL" -f vault/004_noticed.sql
+```
 
 ## Rails (non-negotiable)
 

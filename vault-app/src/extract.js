@@ -18,6 +18,7 @@
 // test comes after the vault holds — not Phase 1.
 
 import { log } from "./logger.js";
+import { piiTotal, stripPii } from "./pii.js";
 
 // ---------------------------------------------------------------------------
 // 1. harm_check — first, before anything is parsed or logged.
@@ -179,7 +180,16 @@ export async function extract(vault, dadId, text, opts = {}) {
   // dad's own words survive on the claim pipe, count claims included. The
   // count is never written as a structured field or a verified row; the
   // chase item below is what the record keeps of it.
-  const cold = stripVenom(text);
+  //
+  // 2b. PII out (statement → notice slice): phones, emails, tax ids,
+  // numbered street addresses, account/routing numbers, kid school ids are
+  // redacted BEFORE anything is stored, so raw_quote/notes — and therefore
+  // state/search/notice — never carry raw PII. Only redaction counts may be
+  // logged; the stripped values are gone. PII strip runs BEFORE venom strip:
+  // venom's sentence split breaks emails ("dad@example. com") and would let
+  // them slip past the redaction.
+  const { text: piiFree, counts: piiCounts } = stripPii(text);
+  const cold = stripVenom(piiFree);
 
   // 3. fields from the venom-free text. notes/location/kids/times are
   // constructed observable fields — a count claim never lands in them.
@@ -210,7 +220,10 @@ export async function extract(vault, dadId, text, opts = {}) {
     written: rows.length,
     refs: rows.map((r) => r.id),
     chase: chase.length,
+    pii: piiTotal(piiCounts),
   });
 
-  return { written: rows.length, chase };
+  // event_ids is internal (BFF notice hook) — the HTTP intake response
+  // stays { written, chase } unless make_notice is set.
+  return { written: rows.length, chase, event_ids: rows.map((r) => r.id) };
 }

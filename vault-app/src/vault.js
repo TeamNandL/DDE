@@ -12,6 +12,7 @@
 
 import { randomUUID } from "node:crypto";
 import { log } from "./logger.js";
+import { buildNoticeText } from "./pii.js";
 import { makeSnippet, textIncludes } from "./search.js";
 
 const PIPES = new Set(["claim", "verified"]);
@@ -85,6 +86,8 @@ export class Vault {
       location: row.location ?? null,
       kids: row.kids ?? [],
       notes: row.notes ?? null,
+      noticed_at: null,
+      noticed_text: null,
     };
     this.events.push(rec);
     log("event.insert", { table: "events", id: rec.id, dad: rec.dad_id, pipe: rec.pipe });
@@ -170,6 +173,34 @@ export class Vault {
       forced_claim: forced,
     });
     return { row: rec, forced_claim: forced };
+  }
+
+  // statement → notice: stamp noticed_at/noticed_text on one of the dad's
+  // events (latest by created_at when eventId is null). Pipe is untouched —
+  // a noticed row stays 'claim' until verified, so verified_export /
+  // affidavit_support never pick it up on notice alone.
+  noticeEvent(dadId, eventId = null) {
+    const mine = this.events.filter((e) => e.dad_id === dadId);
+    const event = eventId
+      ? (mine.find((e) => e.id === eventId) ?? null)
+      : (mine
+          .slice()
+          .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)))
+          .pop() ?? null);
+    if (!event) {
+      const err = new Error("unknown event");
+      err.status = 404;
+      throw err;
+    }
+    event.noticed_at = new Date().toISOString();
+    event.noticed_text = buildNoticeText(event);
+    log("event.notice", { table: "events", id: event.id, dad: dadId, pipe: event.pipe });
+    return {
+      event_id: event.id,
+      noticed_at: event.noticed_at,
+      noticed_text: event.noticed_text,
+      pipe: event.pipe,
+    };
   }
 
   #resolvesVerified(dadId, ref) {
