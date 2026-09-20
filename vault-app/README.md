@@ -50,7 +50,10 @@ src/tokens.js       durable provision tokens (hash-only; PG or .dde-tokens.json)
 src/server.js       optional HTTP for those functions (`npm run serve`)
 public/chip-entry.html  Chip deep-link entry (GET /app, GET /chip/entry)
 CHIP_APP.md         Chip canonical contract (provision → state → intake)
-CHIP_OPERATOR_BLURB.md  paste block for Chip description
+CHIP_PUBLIC_TEMPLATE.md  PUBLIC Chip (demo/door) — zero secrets, test-enforced
+CHIP_DAD_TEMPLATE.md     per-dad Chip (vault-bound) — placeholder slots, hash-only bind
+CHIP_OPERATOR_BLURB.md  operator/eng reference (never the public paste)
+test/chip-template.test.js  public-template leak guard + bind-flow proof
 scripts/chip-deeplink-curl.sh  localhost tip smoke (entry + Bearer)
 Dockerfile          production image: `node src/server.js --http` on 0.0.0.0:$PORT
 HOSTING.md          Fly.io / Render free-tier deploy (DATABASE_URL is a secret)

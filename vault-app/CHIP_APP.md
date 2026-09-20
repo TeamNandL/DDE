@@ -3,6 +3,17 @@
 ADHD-short. Chip (Dad Grok Front Door) talks **only** to the HTTP BFF.
 Never Supabase / Postgres direct. Fake family in demos only.
 
+## Two-object Chip (tenant bind)
+
+| Object | Template | Carries |
+| --- | --- | --- |
+| **Public** demo/door (one, findable) | [`CHIP_PUBLIC_TEMPLATE.md`](CHIP_PUBLIC_TEMPLATE.md) | fake-family demo only — **zero** dad_id/token/live URL (test-enforced) |
+| **Per-dad** vault-bound (one per dad, private) | [`CHIP_DAD_TEMPLATE.md`](CHIP_DAD_TEMPLATE.md) | `{{BASE}}`/`{{DAD_ID}}`/`{{TOKEN}}` slots, filled at bind |
+
+Bind = provision once → fill the per-dad template → open the **hash-only**
+deep link (`{{BASE}}/app#dad_id=…&token=…`). `test/chip-template.test.js`
+keeps the public template clean and proves the bind flow end-to-end.
+
 ## Live vs tip
 
 | Base | Notes |
