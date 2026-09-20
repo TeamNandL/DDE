@@ -61,12 +61,17 @@ export function hasVenom(text) {
 }
 
 export function stripVenom(text) {
-  const sentences = text.match(/[^.!?]+[.!?]*/g) ?? [text];
+  // Guard decimal points ("$1,250.00") from the sentence split — the same
+  // mangle once let "dad@example.com" slip past the PII net as
+  // "dad@example. com". Restored after the venom filter.
+  const guarded = text.replace(/(\d)\.(\d)/g, "$1\u0000$2");
+  const sentences = guarded.match(/[^.!?]+[.!?]*/g) ?? [guarded];
   return sentences
     .filter((s) => !VENOM_PATTERNS.some((re) => re.test(s)))
     .map((s) => s.trim())
     .join(" ")
-    .trim();
+    .trim()
+    .replace(/\u0000/g, ".");
 }
 
 // ---------------------------------------------------------------------------
@@ -211,9 +216,43 @@ export function parseSinceDate(text, referenceDate) {
   return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
-export function extractFields(text, { referenceDate }) {
+// ---------------------------------------------------------------------------
+// Statement arm (statement drop → one noticed sentence): a dropped bank/
+// billing statement becomes ONE claim event whose notes ARE the cold
+// sentence — date/amount/payee when present, never receipt tone. Runs on
+// the already-PII-stripped text (account/routing runs are tokens by now).
+function statementEvent(text, referenceDate) {
+  const amount = /\$\s?[\d,]+(?:\.\d{2})?/.exec(text)?.[0] ?? null;
+  const payee =
+    /\b(?:to|from)\s+([A-Z][A-Za-z&'. -]{2,40}?)(?=\s+on\b|\s*[.,\n]|\s*$)/.exec(text)?.[1]?.trim() ??
+    null;
+  const day = parseMentionedDate(text, referenceDate);
+  const parts = [];
+  if (amount) parts.push(amount);
+  if (payee) parts.push(`to ${payee}`);
+  if (day) parts.push(`on ${day}`);
+  const notes = parts.length ? `Statement: ${parts.join(" ")}.` : "Statement reported.";
+  return {
+    event_type: "other",
+    occurred_at: day ? `${day}T12:00:00.000Z` : new Date(referenceDate).toISOString(),
+    scheduled_at: null,
+    location: null,
+    kids: [],
+    notes,
+  };
+}
+
+const STATEMENT_LIKE = /\b(statement|balance|invoice|billing)\b/i;
+
+export function extractFields(text, { referenceDate, source } = {}) {
   const events = [];
   const lower = text.toLowerCase();
+
+  // Explicit statement drop wins over every other arm.
+  if (source === "statement") {
+    events.push(statementEvent(text, referenceDate));
+    return events;
+  }
 
   const mentionsExchange = /\bexchange\b/.test(lower);
   const late =
@@ -253,6 +292,12 @@ export function extractFields(text, { referenceDate }) {
   if (scheduleChange) event_type = "other";
 
   if (!event_type) {
+    // Statement-like text (keyword + a dollar amount) with no incident
+    // keyword: record the statement drop.
+    if (STATEMENT_LIKE.test(text) && /\$\s?\d/.test(text)) {
+      events.push(statementEvent(text, referenceDate));
+      return events;
+    }
     // No incident keyword: try the emotion-notice arm before giving up.
     if (!PAIN_PATTERNS.some((re) => re.test(text))) return events;
     const since = parseSinceDate(text, referenceDate);
@@ -375,7 +420,7 @@ export async function extract(vault, dadId, text, opts = {}) {
 
   // 3. fields from the venom-free text. notes/location/kids/times are
   // constructed observable fields — a count claim never lands in them.
-  const fields = extractFields(cold, { referenceDate });
+  const fields = extractFields(cold, { referenceDate, source: opts.source });
 
   // 4 + 5. tag claim, one row per event.
   const rows = [];

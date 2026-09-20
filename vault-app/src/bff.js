@@ -122,9 +122,12 @@ export function makeBff(vault, opts = {}) {
     // — Intake writes claim. Requires provisioned dad — never creates state.
     // make_notice=true additionally notices the first written event and adds
     // {noticed_text, event_id}; the plain response shape is unchanged.
-    async postVaultIntake({ dad_id, text, make_notice }, opts = {}) {
+    async postVaultIntake({ dad_id, text, make_notice, source }, opts = {}) {
       await requireDad(dad_id);
-      const { written, chase, event_ids = [] } = await extract(vault, dad_id, text, opts);
+      const { written, chase, event_ids = [] } = await extract(vault, dad_id, text, {
+        ...opts,
+        source: source ?? opts.source,
+      });
       const out = { written, chase };
       if (make_notice === true && event_ids.length > 0) {
         const noticed = await vault.noticeEvent(dad_id, event_ids[0]);

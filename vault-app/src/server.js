@@ -194,13 +194,23 @@ export async function handleBffRequest(bff, req, url, body) {
       err.status = 400;
       throw err;
     }
-    log("http.intake", { dad: dad_id });
+    let source;
+    if (body.source !== undefined && body.source !== null && body.source !== "") {
+      if (body.source !== "statement") {
+        const err = new Error("unknown source");
+        err.status = 400;
+        throw err;
+      }
+      source = body.source;
+    }
+    log("http.intake", { dad: dad_id, source: source ?? "vent" });
     return {
       status: 200,
       body: await bff.postVaultIntake({
         dad_id,
         text,
         make_notice: body.make_notice === true,
+        source,
       }),
     };
   }
