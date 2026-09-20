@@ -132,6 +132,65 @@ test("RAZOR: statement drop via intake make_notice → one noticed sentence, no 
   }
 });
 
+// RAZOR residual gate: make_notice=true + statement-like body with NO
+// source field must take the same one-noticed-sentence path.
+test("RAZOR: statement body, make_notice, NO source → written>=1 + Statement sentence", async () => {
+  const s = await start();
+  try {
+    const { dad_id, token } = await provisionedDad(s.base);
+
+    // The full fixture — including the "Questions: call <number>" footer
+    // that must NOT turn this into a call event.
+    const full = await jsonReq(
+      s.base,
+      "POST",
+      "/vault/intake",
+      { dad_id, text: SAMPLE_FAKE_STATEMENT, make_notice: true },
+      { token },
+    );
+    assert.equal(full.status, 200);
+    assert.ok(full.data.written >= 1, "sourceless statement must write");
+    assertNoticedSafe(full.data.noticed_text, "sourceless noticed_text");
+    assert.match(full.data.noticed_text, /^Statement: \$1,250\.00 to Maple Street Sitters on 2026-09-12\./);
+    assert.doesNotMatch(full.data.noticed_text, /^Call\b/, "call footer must not win");
+
+    // Keyword-less raw paste: no "statement" word — the [account] token
+    // the PII strip minted is the evidence.
+    const other = await provisionedDad(s.base);
+    const raw = await jsonReq(
+      s.base,
+      "POST",
+      "/vault/intake",
+      {
+        dad_id: other.dad_id,
+        text: "ACCT 12345678 ROUTING 021000021 POS PURCHASE $1,250.00 MAPLE STREET SITTERS",
+        make_notice: true,
+      },
+      { token: other.token },
+    );
+    assert.ok(raw.data.written >= 1, "raw paste must write");
+    assertNoticedSafe(raw.data.noticed_text, "raw-paste noticed_text");
+    assert.match(raw.data.noticed_text, /^Statement: \$1,250\.00/);
+
+    // Incident arms still win over false statement detect.
+    const third = await provisionedDad(s.base);
+    const incident = await jsonReq(
+      s.base,
+      "POST",
+      "/vault/intake",
+      {
+        dad_id: third.dad_id,
+        text: "She cancelled the visit on 2026-09-12 over the $40 sitter balance.",
+        make_notice: true,
+      },
+      { token: third.token },
+    );
+    assert.match(incident.data.noticed_text, /^Denied or cancelled visit on 2026-09-12\./);
+  } finally {
+    await s.close();
+  }
+});
+
 test("statement-like text is detected without source; neutral text still writes nothing", async () => {
   const s = await start();
   try {

@@ -242,7 +242,11 @@ function statementEvent(text, referenceDate) {
   };
 }
 
-const STATEMENT_LIKE = /\b(statement|balance|invoice|billing)\b/i;
+// Statement-like evidence: billing keywords, raw-paste column words, or —
+// strongest of all — the "[account]" token the PII strip itself minted
+// (an account/routing number was present, so this is financial paper).
+const STATEMENT_LIKE =
+  /\b(statement|balance|invoice|billing|acct|account|routing|transactions?|purchase|deposit|withdrawal|summary)\b|\[account\]/i;
 
 export function extractFields(text, { referenceDate, source } = {}) {
   const events = [];
@@ -279,8 +283,11 @@ export function extractFields(text, { referenceDate, source } = {}) {
   else if (mentionsExchange) event_type = "exchange";
   else if (/\bvisit\b/.test(lower)) event_type = "visit";
   // Guard: PII redaction tokens ("[phone]", "[email]") must never read as
-  // incident keywords — "call me at [phone]" is not a call event.
-  else if (/(?<!\[)\b(call|phone)\b(?!\])/.test(lower)) event_type = "call";
+  // incident keywords, and "call [phone]" / "call me at [phone]" is a
+  // contact-info line, not a call event — statement footers say exactly
+  // that ("Questions: call <number>").
+  else if (/(?<!\[)\b(call|phone)\b(?!\])(?!(?:\s+\w+){0,2}\s*\[phone\])/.test(lower))
+    event_type = "call";
 
   // Schedule-change arm (Sweeper): "moved the pickup", "switched the
   // weekend", "rescheduled the exchange" — a dated scheduling claim with
@@ -292,9 +299,12 @@ export function extractFields(text, { referenceDate, source } = {}) {
   if (scheduleChange) event_type = "other";
 
   if (!event_type) {
-    // Statement-like text (keyword + a dollar amount) with no incident
-    // keyword: record the statement drop.
-    if (STATEMENT_LIKE.test(text) && /\$\s?\d/.test(text)) {
+    // Statement-like text (evidence + a dollar amount or a named date)
+    // with no incident keyword: record the statement drop.
+    if (
+      STATEMENT_LIKE.test(text) &&
+      (/\$\s?\d/.test(text) || parseMentionedDate(text, referenceDate))
+    ) {
       events.push(statementEvent(text, referenceDate));
       return events;
     }
