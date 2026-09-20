@@ -12,6 +12,7 @@
 
 import { randomUUID } from "node:crypto";
 import { log } from "./logger.js";
+import { memorySearch, validateSearchParams } from "./search.js";
 
 const PIPES = new Set(["claim", "verified"]);
 
@@ -239,6 +240,16 @@ export class Vault {
       documents: this.documents.filter((r) => r.dad_id === dadId && r.pipe === "verified"),
       events: this.events.filter((r) => r.dad_id === dadId && r.pipe === "verified"),
     };
+  }
+
+  // Full-text-ish search over this dad's rows ONLY. params are validated
+  // (dad_id required) before any row is touched; the query text is never
+  // logged — only its length and the hit count.
+  async search(params) {
+    const p = validateSearchParams(params);
+    const rows = memorySearch(this, p);
+    log("search", { dad: p.dadId, hits: rows.length, qlen: p.q ? p.q.length : 0 });
+    return rows;
   }
 
   // Test helper: every stored row across every table (state included).

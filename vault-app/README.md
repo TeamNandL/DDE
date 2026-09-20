@@ -102,6 +102,7 @@ Off unless you start it. Product bots call these Phase 1 routes:
 | `POST` | `/vault/comms/cold` | `{ dad_id, body_cold, channel }` → `{ id }` |
 | `POST` | `/vault/comms/pull` | `{ dad_id, channel, source_ref, body_cold?, sent_at? }` → `{ id }` |
 | `GET` | `/vault/export/verified` | `?dad_id=` → verified rows only |
+| `GET` | `/vault/search` | `?dad_id=&q=&pipe=&type=&from=&to=&limit=` → ranked hits |
 
 ```
 npm run serve -- --http
@@ -116,6 +117,31 @@ later gate — do not expose this as a public client.
 `GET /health` returns `{ "ok": true }` and does not touch the vault.
 
 There is **no** HTTP route that returns claim rows to Reporting.
+
+## Search (hard dad_id tenancy)
+
+`GET /vault/search` (BFF: `getVaultSearch`) — full-text search + filters
+over the dad's own record. Backed by Postgres FTS (`vault/003_search.sql`:
+generated `tsvector` columns, GIN indexes, and the `vault_search()`
+function) or the equivalent in-memory engine (`src/search.js`).
+
+- `dad_id` **required** (400 without it). Every backend filters every row
+  on it — no cross-tenant path exists. App-enforced; RLS still off until
+  the auth gate.
+- `q` optional — empty `q` returns the filtered list only.
+- `pipe` optional `claim|verified`. Search may return both pipes, each
+  labeled; the filter narrows to one. **Reporting / exhibit paths still
+  read `verified_export` only — search is a seat surface, never a
+  Reporting input.**
+- `type` optional `events|communications|documents|state|month_summary|all`.
+- `from` / `to` — range on the applicable timestamp per table
+  (`occurred_at` · `sent_at` · `created_at` · `updated_at` · `month`).
+- `limit` 1–50 (default 20).
+
+Results: `source_table, id, dad_id, pipe, rank, snippet, ts, created_at` —
+ranked by `ts_rank` with a recency tiebreak. Harm-discarded and
+venom-stripped text was never stored, so search cannot resurrect it. The
+query text is never logged (only dad id, query length, hit count).
 
 ## Spreadsheet views (from the vault)
 

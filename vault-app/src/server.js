@@ -28,6 +28,7 @@ export const PHASE1_ROUTES = [
   "POST /vault/comms/cold",
   "POST /vault/comms/pull",
   "GET /vault/export/verified",
+  "GET /vault/search",
 ];
 
 function json(res, status, body) {
@@ -155,6 +156,25 @@ export async function handleBffRequest(bff, req, url, body) {
     }
     log("http.comms.pull", { dad: dad_id });
     return { status: 200, body: await bff.postCommsPull(body) };
+  }
+
+  // Seat search/filter surface. dad_id REQUIRED (400 without it); q optional
+  // (empty q = filtered list). May return claim and verified rows, labeled.
+  // NOT a Reporting route — exhibits still use /vault/export/verified only.
+  // The query text is never logged.
+  if (method === "GET" && path === "/vault/search") {
+    const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
+    const rows = await bff.getVaultSearch({
+      dad_id,
+      q: q.get("q") ?? undefined,
+      pipe: q.get("pipe") ?? undefined,
+      type: q.get("type") ?? undefined,
+      from: q.get("from") ?? undefined,
+      to: q.get("to") ?? undefined,
+      limit: q.get("limit") ?? undefined,
+    });
+    log("http.search", { dad: dad_id, hits: rows.length });
+    return { status: 200, body: rows };
   }
 
   if (method === "GET" && path === "/vault/export/verified") {

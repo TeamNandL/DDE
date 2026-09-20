@@ -59,6 +59,15 @@ export function makeBff(vault) {
       return { id: rec.id };
     },
 
+    // GET /vault/search {dad_id, q?, pipe?, type?, from?, to?, limit?} -> rows
+    // Seat surface (Intake / Edge / Front Door). dad_id REQUIRED — the vault
+    // enforces it and filters every row. May return claim AND verified rows,
+    // each labeled with its pipe. Reporting / exhibits still read
+    // verified_export only; search is never a Reporting input.
+    async getVaultSearch(params) {
+      return vault.search(params);
+    },
+
     // GET /vault/export/verified {dad_id} -> rows — Reporting ONLY.
     async getVaultExportVerified({ dad_id }) {
       const rows = await vault.verifiedExport(dad_id);

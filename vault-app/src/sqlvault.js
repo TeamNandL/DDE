@@ -17,6 +17,7 @@
 
 import { randomUUID } from "node:crypto";
 import { log } from "./logger.js";
+import { validateSearchParams } from "./search.js";
 
 // SQL literal helpers. Values are embedded (not bound) because the emit
 // transport needs full statements; everything funnels through these quoters.
@@ -121,6 +122,23 @@ export class SqlVault {
            from verified_export where dad_id = ${lit(dadId)};`,
       )) ?? []
     );
+  }
+
+  // Full-text search via vault_search() (vault/003_search.sql). dad_id is a
+  // required argument of the SQL function itself — no cross-tenant path
+  // exists. The query text goes to the database as a parameter of that
+  // function and is never logged (only its length and the hit count).
+  async search(params) {
+    const p = validateSearchParams(params);
+    const rows =
+      (await this.exec(
+        `select source_table, id, dad_id, pipe, rank, snippet, ts, created_at
+           from vault_search(${lit(p.dadId)}::uuid, ${lit(p.q)}, ${lit(p.pipe)},
+                             ${lit(p.type)}, ${lit(p.from ? p.from.toISOString() : null)},
+                             ${lit(p.to ? p.to.toISOString() : null)}, ${p.limit});`,
+      )) ?? [];
+    log("search", { dad: p.dadId, hits: rows.length, qlen: p.q ? p.q.length : 0 });
+    return rows;
   }
 
   // Row counts per table for a dad — used by the harm-discard assertion.
