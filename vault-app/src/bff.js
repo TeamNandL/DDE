@@ -26,13 +26,21 @@ function unknownDad() {
   return err;
 }
 
-// Draft soft grade — ONE heuristic, no LLM, shared by the draft POST and
-// the chip_entry recompute: "ready" = no venom (neither stripped at write
-// nor present in the text) and fits one cold-ask breath (<= 280 chars);
-// otherwise "tighten". Coaching, never a gate.
+// Tone flags the GRADE catches but the venom STRIP does not drop —
+// "This is stupid." is storable, just not send-ready as written.
+const TONE_RE = /\b(stupid|ridiculous|pathetic|idiotic|insane|absurd|a joke)\b/i;
+
+// Draft soft grade — ONE heuristic, no LLM: "ready" = no venom (neither
+// stripped at write nor present), no tone flag, and fits one cold-ask
+// breath (<= 280 chars); otherwise "tighten". Coaching, never a gate.
+// The grade is computed ONCE at the draft POST and PERSISTED — reads
+// must return the stored grade, never recompute from the cleaned body
+// (the venom that earned "tighten" is already gone from it).
 export function draftSoftGrade(bodyText, venomWasStripped = false) {
   const text = String(bodyText ?? "");
-  return !venomWasStripped && !hasVenom(text) && text.length <= 280 ? "ready" : "tighten";
+  return !venomWasStripped && !hasVenom(text) && !TONE_RE.test(text) && text.length <= 280
+    ? "ready"
+    : "tighten";
 }
 
 // Missing-seed packs: PII-safe blank LABELS only — prompts for facts the
@@ -208,7 +216,9 @@ export function makeBff(vault, opts = {}) {
         const newest = drafts[drafts.length - 1];
         const bodyText = stripPii(String(newest.body_cold ?? "")).text;
         out.latest_draft = {
-          soft_grade: draftSoftGrade(bodyText),
+          // STORED grade — must match what the draft POST returned.
+          // Recompute only for legacy rows written before persistence.
+          soft_grade: newest.soft_grade ?? draftSoftGrade(bodyText),
           preview: bodyText.slice(0, 80),
         };
       }
@@ -417,6 +427,9 @@ export function makeBff(vault, opts = {}) {
         // Nothing storable survived the strips (pure venom) — no row.
         return { written: 0 };
       }
+      // Grade from the PRE-strip knowledge, persisted with the row so
+      // reads return the same grade the POST did.
+      const soft_grade = draftSoftGrade(cold, venomStripped);
       const rec = await vault.insertCommunication(dad_id, {
         direction: "draft",
         channel: null,
@@ -424,10 +437,8 @@ export function makeBff(vault, opts = {}) {
         sent_at: null,
         pipe: "claim",
         draft_kind: kind ?? null,
+        soft_grade,
       });
-      // Shared heuristic (see draftSoftGrade). The draft is stored either
-      // way — grade is coaching, never a gate.
-      const soft_grade = draftSoftGrade(cold, venomStripped);
       log("comms.draft", { dad: dad_id, id: rec.id, kind: kind ?? "none", grade: soft_grade });
       return { written: 1, draft_id: rec.id, body: cold, soft_grade };
     },

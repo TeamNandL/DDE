@@ -54,11 +54,11 @@ export class SqlVault {
     const id = randomUUID();
     await this.exec(
       `insert into communications (id, dad_id, pipe, source_ref, raw_quote,
-                                   direction, channel, body_cold, sent_at, draft_kind)
+                                   direction, channel, body_cold, sent_at, draft_kind, soft_grade)
        values (${lit(id)}, ${lit(dadId)}, ${lit(row.pipe)}, ${lit(row.source_ref ?? null)},
                ${lit(row.raw_quote ?? null)}, ${lit(row.direction)}, ${lit(row.channel ?? null)},
                ${lit(row.body_cold ?? null)}, ${lit(row.sent_at ?? null)},
-               ${lit(row.draft_kind ?? null)});`,
+               ${lit(row.draft_kind ?? null)}, ${lit(row.soft_grade ?? null)});`,
     );
     log("comm.insert", { table: "communications", id, dad: dadId, pipe: row.pipe });
     return { id, dad_id: dadId, ...row };
@@ -68,7 +68,7 @@ export class SqlVault {
   async listDrafts(dadId) {
     return (
       (await this.exec(
-        `select id, dad_id, pipe, direction, body_cold, draft_kind, created_at
+        `select id, dad_id, pipe, direction, body_cold, draft_kind, soft_grade, created_at
            from communications
           where dad_id = ${lit(dadId)} and direction = 'draft'
           order by created_at;`,

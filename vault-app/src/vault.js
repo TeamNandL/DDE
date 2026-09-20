@@ -106,6 +106,7 @@ export class Vault {
       body_cold: row.body_cold ?? null,
       sent_at: row.sent_at ?? null,
       draft_kind: row.draft_kind ?? null,
+      soft_grade: row.soft_grade ?? null,
     };
     this.communications.push(rec);
     log("comm.insert", { table: "communications", id: rec.id, dad: rec.dad_id, pipe: rec.pipe });

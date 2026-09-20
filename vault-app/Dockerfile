@@ -19,6 +19,7 @@ COPY vault/005_return.sql /app/vault/005_return.sql
 COPY vault/006_progress.sql /app/vault/006_progress.sql
 COPY vault/007_cold_ask.sql /app/vault/007_cold_ask.sql
 COPY vault/008_drafts.sql /app/vault/008_drafts.sql
+COPY vault/009_draft_grade.sql /app/vault/009_draft_grade.sql
 
 WORKDIR /app/vault-app
 COPY vault-app/package.json vault-app/package-lock.json ./

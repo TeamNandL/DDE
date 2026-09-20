@@ -186,10 +186,12 @@ test("latest_draft hint: omitted with no drafts; newest draft's grade + 80-char 
     assert.equal(two.data.latest_draft.preview.length, 80);
     assertChipSafe(two.data.latest_draft.preview);
 
-    // Legacy dirty row (venom snuck into storage pre-rail) → recompute
-    // says tighten, and the preview is belt-stripped of PII.
+    // Legacy dirty row (pre-persistence: no stored grade, venom snuck into
+    // storage) → the recompute FALLBACK says tighten, and the preview is
+    // belt-stripped of PII.
     const drafts = s.vault.listDrafts(dad_id);
     drafts[drafts.length - 1].body_cold = `She is toxic. Call ${PHONE} about the window.`;
+    drafts[drafts.length - 1].soft_grade = null;
     const dirty = await jsonReq(s.base, "GET", `/vault/chip_entry?dad_id=${dad_id}`, null, { token });
     assert.equal(dirty.data.latest_draft.soft_grade, "tighten");
     assert.ok(!dirty.data.latest_draft.preview.includes(PHONE));
@@ -199,6 +201,73 @@ test("latest_draft hint: omitted with no drafts; newest draft's grade + 80-char 
     const state = await jsonReq(s.base, "GET", `/vault/state?dad_id=${dad_id}`, null, { token });
     assert.equal(state.data.last_next, null);
     assert.equal(s.vault.listDrafts(dad_id).length, 2);
+  } finally {
+    await s.close();
+  }
+});
+
+// RAZOR hard gate: chip_entry's latest_draft.soft_grade must be THE grade
+// the draft POST returned — persisted, never recomputed from the cleaned
+// body (where the venom that earned "tighten" is already gone).
+test("RAZOR: chip_entry soft_grade matches the draft POST grade", async () => {
+  const s = await start();
+  try {
+    const { dad_id, token } = await provisionedDad(s.base);
+
+    // Exact Razor case: tone flag, storable, graded tighten at POST.
+    const post = await jsonReq(
+      s.base,
+      "POST",
+      "/vault/comms/draft",
+      { dad_id, body: "This is stupid." },
+      { token },
+    );
+    assert.equal(post.data.written, 1);
+    assert.equal(post.data.soft_grade, "tighten");
+    const entry = await jsonReq(s.base, "GET", `/vault/chip_entry?dad_id=${dad_id}`, null, { token });
+    assert.equal(entry.data.latest_draft.soft_grade, "tighten", "must match the POST grade");
+    assert.equal(entry.data.latest_draft.preview, "This is stupid.");
+
+    // The mismatch class: venom stripped at write → stored body is clean
+    // and would recompute "ready" — the STORED grade must still say
+    // tighten.
+    const venomy = await jsonReq(
+      s.base,
+      "POST",
+      "/vault/comms/draft",
+      { dad_id, body: "She is toxic. Meet Saturday at ten." },
+      { token },
+    );
+    assert.equal(venomy.data.soft_grade, "tighten");
+    assert.doesNotMatch(venomy.data.body, /toxic/, "venom is gone from storage");
+    const entry2 = await jsonReq(s.base, "GET", `/vault/chip_entry?dad_id=${dad_id}`, null, { token });
+    assert.equal(entry2.data.latest_draft.soft_grade, "tighten", "stored grade, not recompute");
+    assert.match(entry2.data.latest_draft.preview, /^Meet Saturday at ten\./);
+
+    // Shape, GET-only, and rails all hold.
+    assert.deepEqual(Object.keys(entry2.data.latest_draft).sort(), ["preview", "soft_grade"]);
+    assert.equal(s.vault.listDrafts(dad_id).length, 2, "GET wrote nothing");
+    const state = await jsonReq(s.base, "GET", `/vault/state?dad_id=${dad_id}`, null, { token });
+    assert.equal(state.data.last_next, null);
+    const verified = await jsonReq(
+      s.base,
+      "GET",
+      `/vault/export/verified?dad_id=${dad_id}`,
+      null,
+      { token },
+    );
+    assert.deepEqual(verified.data, []);
+
+    // Omit-when-empty still holds for a dad with no drafts.
+    const other = await provisionedDad(s.base);
+    const none = await jsonReq(
+      s.base,
+      "GET",
+      `/vault/chip_entry?dad_id=${other.dad_id}`,
+      null,
+      { token: other.token },
+    );
+    assert.ok(!("latest_draft" in none.data));
   } finally {
     await s.close();
   }
