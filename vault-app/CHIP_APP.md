@@ -190,7 +190,8 @@ greeting `POST /vault/return` gives, but this GET **never stamps
 ```
 POST /vault/comms/draft
 { "dad_id": "<uuid>", "body": "<cold ask text>", "kind"?: "cold_ask" }
-→ 200 { "written": 1, "draft_id": "<uuid>", "body": "<stripped>" }
+→ 200 { "written": 1, "draft_id": "<uuid>", "body": "<stripped>",
+        "soft_grade": "ready" | "tighten" }   // ready = nothing stripped for tone and ≤ 280 chars; tighten = venom came out or runs long (stored either way); absent when written:0
 → 200 { "written": 0 }        // harm heard, or nothing survived the strips
 → 400 empty body / unknown kind
 

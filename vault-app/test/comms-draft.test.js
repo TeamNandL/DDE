@@ -72,6 +72,7 @@ test("draft stored after PII+venom strip; never sent, never verified; round-trip
     assert.match(draft.data.body, /\[phone\]/);
     assert.doesNotMatch(draft.data.body, /on purpose/, "venom stripped");
     assert.ok(!draft.data.body.includes(PHONE));
+    assert.equal(draft.data.soft_grade, "tighten", "venom was stripped → tighten");
 
     // Stored row: draft direction, claim pipe, never sent, kind carried.
     const row = s.vault.communications.find((c) => c.id === draft.data.draft_id);
@@ -108,6 +109,7 @@ test("draft stored after PII+venom strip; never sent, never verified; round-trip
       { token },
     );
     assert.equal(plain.data.written, 1);
+    assert.equal(plain.data.soft_grade, "ready", "clean and short → ready");
 
     // Log hygiene: never the draft text or PII.
     assert.doesNotMatch(logger.lines().join("\n"), /Saturday window|904-555|Thursday pickup/i);
@@ -142,6 +144,51 @@ test("harm body → written:0, ZERO rows; pure-venom body → written:0 too", as
     );
     assert.deepEqual(venomOnly.data, { written: 0 });
     assert.equal(s.vault.communications.length, 0);
+  } finally {
+    await s.close();
+  }
+});
+
+test("soft grade: length rule at the 280 boundary; harm response has NO soft_grade key", async () => {
+  const s = await start();
+  try {
+    const { dad_id, token } = await provisionedDad(s.base);
+
+    // Clean but long (> 280 stripped chars) → tighten, still stored.
+    const longBody = "Requesting a calm written plan for the fall schedule. ".repeat(7).trim();
+    assert.ok(longBody.length > 280);
+    const long = await jsonReq(
+      s.base,
+      "POST",
+      "/vault/comms/draft",
+      { dad_id, body: longBody },
+      { token },
+    );
+    assert.equal(long.data.written, 1);
+    assert.equal(long.data.soft_grade, "tighten");
+    assert.ok(long.data.draft_id, "long draft is still stored");
+
+    // Exactly at the boundary (<= 280) and clean → ready.
+    const at280 = "a".repeat(280);
+    const edge = await jsonReq(
+      s.base,
+      "POST",
+      "/vault/comms/draft",
+      { dad_id, body: at280 },
+      { token },
+    );
+    assert.equal(edge.data.soft_grade, "ready");
+
+    // Harm → written:0 with no soft_grade key at all.
+    const harm = await jsonReq(
+      s.base,
+      "POST",
+      "/vault/comms/draft",
+      { dad_id, body: "I could kill that woman." },
+      { token },
+    );
+    assert.deepEqual(harm.data, { written: 0 });
+    assert.ok(!("soft_grade" in harm.data));
   } finally {
     await s.close();
   }

@@ -13,7 +13,7 @@
 // Rule (§5): there is NO endpoint that returns claim rows to Reporting.
 
 import { randomUUID } from "node:crypto";
-import { extract, harmCheck, stripVenom } from "./extract.js";
+import { extract, harmCheck, hasVenom, stripVenom } from "./extract.js";
 import { log } from "./logger.js";
 import { stripPii } from "./pii.js";
 import { clampProgressPatch, progressChipLine, progressLine, softGrade } from "./progress.js";
@@ -374,9 +374,12 @@ export function makeBff(vault, opts = {}) {
         throw err;
       }
       if (harmCheck(body)) {
+        // No soft_grade on a discarded draft — nothing to grade.
         return { written: 0 };
       }
-      const cold = stripVenom(stripPii(body).text).trim();
+      const piiClean = stripPii(body).text;
+      const venomStripped = hasVenom(piiClean);
+      const cold = stripVenom(piiClean).trim();
       if (!cold) {
         // Nothing storable survived the strips (pure venom) — no row.
         return { written: 0 };
@@ -389,8 +392,13 @@ export function makeBff(vault, opts = {}) {
         pipe: "claim",
         draft_kind: kind ?? null,
       });
-      log("comms.draft", { dad: dad_id, id: rec.id, kind: kind ?? "none" });
-      return { written: 1, draft_id: rec.id, body: cold };
+      // Heuristic soft grade, no LLM: "ready" = nothing had to be stripped
+      // for tone and it fits one cold-ask breath (<= 280 stripped chars);
+      // "tighten" = venom came out or it runs long. The draft is stored
+      // either way — grade is coaching, never a gate.
+      const soft_grade = !venomStripped && cold.length <= 280 ? "ready" : "tighten";
+      log("comms.draft", { dad: dad_id, id: rec.id, kind: kind ?? "none", grade: soft_grade });
+      return { written: 1, draft_id: rec.id, body: cold, soft_grade };
     },
 
     // GET /vault/comms/drafts {dad_id} -> [{draft_id, body, kind, created_at}]

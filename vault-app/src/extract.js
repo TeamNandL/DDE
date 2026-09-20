@@ -55,6 +55,11 @@ const VENOM_PATTERNS = [
   /\bdoing this to (me|us)\b/i,
 ];
 
+/** True when the text contains venom the strip would drop (heuristic). */
+export function hasVenom(text) {
+  return VENOM_PATTERNS.some((re) => re.test(text));
+}
+
 export function stripVenom(text) {
   const sentences = text.match(/[^.!?]+[.!?]*/g) ?? [text];
   return sentences
