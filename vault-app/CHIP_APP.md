@@ -141,6 +141,27 @@ venom stripped before storage). `this_week_done` bumps by one only when a
 total is set and not yet reached. Chip then speaks `progress_line` and asks
 about the new `missing_one`, or moves on when null.
 
+### 7) Seed the checklist (kids-facts pack)
+
+```
+POST /vault/missing/seed
+Authorization: Bearer <token>
+Content-Type: application/json
+{ "dad_id": "<uuid>", "pack"?: "kids_facts" }   // pack defaults to kids_facts
+
+→ 200 { "written": 1, "missing_one": "Kids school name",
+        "progress_line": "0 of 5 this week; still open: Kids school name" }
+→ 200 { "written": 0, "missing_one": "<existing first item>",
+        "progress_line": … }                     // checklist not empty: no overwrite
+```
+
+Seeds an **empty** checklist with 5 PII-safe blank labels (school name,
+teacher, pediatrician/clinic, pickup person, emergency-contact
+relationship) — prompts only, never case data. Counters go to 5/0 only
+when **both** were null; existing counters are never touched. The dad
+then fills them one at a time via `/vault/missing/fill`. Unknown pack →
+400.
+
 ### Auth header
 
 `Authorization: Bearer <token>` (preferred) or `X-DDE-Token: <token>`.

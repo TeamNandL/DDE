@@ -36,6 +36,7 @@ export const PHASE1_ROUTES = [
   "POST /vault/notice",
   "POST /vault/return",
   "POST /vault/missing/fill",
+  "POST /vault/missing/seed",
   "POST /vault/provision",
   "GET /vault/state",
   "PUT /vault/state",
@@ -208,6 +209,22 @@ export async function handleBffRequest(bff, req, url, body) {
     // Log hygiene: ids/flags only — never the line or the answer.
     log("http.return", { dad: dad_id, answered: Boolean(answer.trim()) });
     return { status: 200, body: await bff.postVaultReturn({ dad_id, answer }) };
+  }
+
+  if (method === "POST" && path === "/vault/missing/seed") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    let pack;
+    if (body.pack !== undefined && body.pack !== null && body.pack !== "") {
+      if (typeof body.pack !== "string") {
+        const err = new Error("pack must be a string");
+        err.status = 400;
+        throw err;
+      }
+      pack = body.pack;
+    }
+    log("http.missing.seed", { dad: dad_id });
+    return { status: 200, body: await bff.postMissingSeed({ dad_id, pack }) };
   }
 
   if (method === "POST" && path === "/vault/missing/fill") {

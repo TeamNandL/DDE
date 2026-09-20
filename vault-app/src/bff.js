@@ -26,6 +26,19 @@ function unknownDad() {
   return err;
 }
 
+// Missing-seed packs: PII-safe blank LABELS only — prompts for facts the
+// dad fills in later via /vault/missing/fill, never case data themselves.
+// ≤ 7 items (checklist rail) and ≤ 80 chars each.
+export const SEED_PACKS = {
+  kids_facts: [
+    "Kids school name",
+    "Teacher name (oldest)",
+    "Pediatrician / clinic name",
+    "After-school pickup person",
+    "Emergency contact relationship",
+  ],
+};
+
 // Return-loop greeting for Chip. Plain text only — never a token, URL, or
 // dad_id (Chip carries auth separately). Null when there is no Next: an
 // empty Next is never invented into a "last time". PII-stripped as a
@@ -132,6 +145,43 @@ export function makeBff(vault, opts = {}) {
         answered: Boolean(typeof answer === "string" && answer.trim()),
       });
       return out;
+    },
+
+    // POST /vault/missing/seed {dad_id, pack?} -> {written, missing_one, progress_line}
+    // Seeds an EMPTY checklist with PII-safe blanks (labels only, no case
+    // data). Non-empty missing is never overwritten. Counters are set to
+    // 5/0 only when BOTH are null — existing counters are never invented
+    // over. No event/comms rows — claim ≠ verified untouched.
+    async postMissingSeed({ dad_id, pack }) {
+      const packName = pack ?? "kids_facts";
+      const labels = SEED_PACKS[packName];
+      if (!labels) {
+        const err = new Error("unknown pack");
+        err.status = 400;
+        throw err;
+      }
+      const state = await requireDad(dad_id);
+      const missing = state.missing ?? [];
+      if (missing.length > 0) {
+        // No overwrite: report what's already open, write nothing.
+        return {
+          written: 0,
+          missing_one: stripPii(String(missing[0])).text,
+          progress_line: progressChipLine(state),
+        };
+      }
+      const patch = { missing: labels.map((l) => stripPii(l).text) };
+      if (state.this_week_total == null && state.this_week_done == null) {
+        patch.this_week_total = labels.length;
+        patch.this_week_done = 0;
+      }
+      const newState = await vault.updateState(dad_id, patch);
+      log("missing.seed", { dad: dad_id, pack: packName, items: labels.length });
+      return {
+        written: 1,
+        missing_one: newState.missing?.[0] ?? null,
+        progress_line: progressChipLine(newState),
+      };
     },
 
     // POST /vault/missing/fill {dad_id, answer}

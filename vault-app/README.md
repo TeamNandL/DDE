@@ -160,6 +160,7 @@ Off unless you start it. Product bots call these Phase 1 routes:
 | `POST` | `/vault/notice` | `{ dad_id, event_id? }` → `{ noticed_text, event_id }` (no `event_id` → latest event; pipe stays `claim`) |
 | `POST` | `/vault/return` | `{ dad_id, answer? }` → `{ last_next, line, progress_line, written?, chase? }` (`line: null` when no Next; `answer` writes claim via the intake pipeline) |
 | `POST` | `/vault/missing/fill` | `{ dad_id, answer }` → `{ written, missing_one, progress_line }` (closes `missing[0]` as one claim event, bumps `this_week_done` when a total is set; empty checklist → `written: 0`, nothing invented; harm/PII/venom rails apply to the answer) |
+| `POST` | `/vault/missing/seed` | `{ dad_id, pack? }` → `{ written, missing_one, progress_line }` (empty checklist only: seeds 5 PII-safe kids-facts blanks, counters 5/0 only when both were null; non-empty → `written: 0`, no overwrite) |
 | `POST` | `/vault/provision` | `{ dad_id? }` → `{ dad_id, token }` (**only** create path; opaque token; **hash** persisted) |
 
 **Auth (minimal):** After provision, send `Authorization: Bearer <token>` or `X-DDE-Token: <token>` on intake/state/comms/export. Missing/wrong → **401**; token for another dad → **403**; unprovisioned dad → **404** `unknown dad`. Writes never silent-create state. **Durable tokens:** SHA-256 hash only in Postgres (`dde_provision_tokens`) when vault is on `DATABASE_URL`, else `.dde-tokens.json` (override with `DDE_TOKENS_PATH`).
