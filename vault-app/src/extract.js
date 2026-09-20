@@ -121,20 +121,29 @@ export function parseMentionedDate(text, referenceDate) {
   let day = null;
   let year = null;
 
-  let m =
-    /\b(?:on|for)\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s+(\d{4}))?/i.exec(
-      text,
-    );
+  // ISO "2026-09-12" is unambiguous — no on/for prefix required (Razor
+  // date gate: "Visit on 2026-09-12 was cancelled").
+  let m = /\b(\d{4})-(\d{1,2})-(\d{1,2})\b/.exec(text);
   if (m) {
-    month = MONTH_BY_PREFIX[m[1].toLowerCase()];
-    day = Number(m[2]);
-    year = m[3] ? Number(m[3]) : null;
+    year = Number(m[1]);
+    month = Number(m[2]);
+    day = Number(m[3]);
   } else {
-    m = /\b(?:on|for)\s+(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/i.exec(text);
+    m =
+      /\b(?:on|for)\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s+(\d{4}))?/i.exec(
+        text,
+      );
     if (m) {
-      month = Number(m[1]);
+      month = MONTH_BY_PREFIX[m[1].toLowerCase()];
       day = Number(m[2]);
-      year = m[3] ? (m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3])) : null;
+      year = m[3] ? Number(m[3]) : null;
+    } else {
+      m = /\b(?:on|for)\s+(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/i.exec(text);
+      if (m) {
+        month = Number(m[1]);
+        day = Number(m[2]);
+        year = m[3] ? (m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3])) : null;
+      }
     }
   }
 
@@ -155,20 +164,27 @@ export function parseSinceDate(text, referenceDate) {
   let day = null;
   let year = null;
 
-  let m =
-    /\bsince\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s+(\d{4}))?/i.exec(
-      text,
-    );
+  let m = /\bsince\s+(\d{4})-(\d{1,2})-(\d{1,2})\b/i.exec(text);
   if (m) {
-    month = MONTH_BY_PREFIX[m[1].toLowerCase()];
-    day = Number(m[2]);
-    year = m[3] ? Number(m[3]) : null;
+    year = Number(m[1]);
+    month = Number(m[2]);
+    day = Number(m[3]);
   } else {
-    m = /\bsince\s+(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/i.exec(text);
+    m =
+      /\bsince\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s+(\d{4}))?/i.exec(
+        text,
+      );
     if (m) {
-      month = Number(m[1]);
+      month = MONTH_BY_PREFIX[m[1].toLowerCase()];
       day = Number(m[2]);
-      year = m[3] ? (m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3])) : null;
+      year = m[3] ? Number(m[3]) : null;
+    } else {
+      m = /\bsince\s+(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/i.exec(text);
+      if (m) {
+        month = Number(m[1]);
+        day = Number(m[2]);
+        year = m[3] ? (m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3])) : null;
+      }
     }
   }
 
@@ -197,9 +213,14 @@ export function extractFields(text, { referenceDate }) {
       lower,
     );
 
+  // Custody-context nouns: "Pickup on 2026-09-12 was 45 minutes late" is a
+  // late claim even though the vent never says "exchange".
+  const custodyContext =
+    /\b(pick-?up|drop-?off|exchange|visit|weekend|parenting time|schedule)\b/.test(lower);
+
   let event_type = null;
   // Late wins when both apply so "cancelled and late" is late_exchange.
-  if (late && (mentionsExchange || denied)) event_type = "late_exchange";
+  if (late && (mentionsExchange || denied || custodyContext)) event_type = "late_exchange";
   else if (denied) event_type = "denied_visit";
   else if (mentionsExchange) event_type = "exchange";
   else if (/\bvisit\b/.test(lower)) event_type = "visit";
@@ -237,7 +258,9 @@ export function extractFields(text, { referenceDate }) {
     if (kids.length) noteParts.push(`Children named: ${kids.join(", ")}.`);
     events.push({
       event_type: "other",
-      occurred_at: new Date(referenceDate).toISOString(),
+      // Razor date gate: a mentioned date is the event's date — the start
+      // of the limited-contact period — not the day of the venting.
+      occurred_at: since ? `${since}T12:00:00.000Z` : new Date(referenceDate).toISOString(),
       scheduled_at: null,
       location: null,
       kids,

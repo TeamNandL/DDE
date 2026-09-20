@@ -44,7 +44,9 @@ async function jsonReq(base, method, path, body, { token } = {}) {
 // ---------------------------------------------------------------------------
 // Units.
 
-test("parseMentionedDate: on/for + month-name or slash; future allowed; junk null", () => {
+test("parseMentionedDate: ISO, on/for + month-name or slash; future allowed; junk null", () => {
+  assert.equal(parseMentionedDate("Visit on 2026-09-12 was cancelled.", REF), "2026-09-12");
+  assert.equal(parseMentionedDate("2025-12-01 exchange", REF), "2025-12-01");
   assert.equal(parseMentionedDate("for October 3", REF), "2026-10-03");
   assert.equal(parseMentionedDate("for October 3rd, 2025", REF), "2025-10-03");
   assert.equal(parseMentionedDate("on 9/12", REF), "2026-09-12");
@@ -148,6 +150,60 @@ test("scheduling/refusal vents → written>=1 + non-empty noticed_text; claim ne
   } finally {
     await s.close();
   }
+});
+
+// ---------------------------------------------------------------------------
+// Razor date gate + Sweeper F1–F5: the vent's date drives occurred_at and
+// the notice — never the intake day. No signal → no clock change.
+
+test("RAZOR hard gate: 'Visit on 2026-09-12 was cancelled.' → notice says 2026-09-12, not today", async () => {
+  const s = await start();
+  const dad_id = randomUUID();
+  const today = new Date().toISOString().slice(0, 10);
+  try {
+    const prov = await jsonReq(s.base, "POST", "/vault/provision", { dad_id });
+    const token = prov.data.token;
+    const intake = await jsonReq(
+      s.base,
+      "POST",
+      "/vault/intake",
+      { dad_id, text: "Visit on 2026-09-12 was cancelled.", make_notice: true },
+      { token },
+    );
+    assert.equal(intake.status, 200);
+    assert.ok(intake.data.written >= 1);
+    const noticed = intake.data.noticed_text;
+    assert.ok(typeof noticed === "string" && noticed.trim().length > 0);
+    assert.match(noticed, /2026-09-12/);
+    assert.ok(!noticed.includes(today), `notice used intake day: ${noticed}`);
+
+    const [event] = await s.vault.listEvents(dad_id);
+    assert.equal(String(event.occurred_at).slice(0, 10), "2026-09-12");
+    assert.equal(event.pipe, "claim");
+  } finally {
+    await s.close();
+  }
+});
+
+test("Sweeper F1–F5: dated cancel/deny/late/limited/refused-call — none write 0, all dated", () => {
+  const cases = [
+    // [vent, expected event_type, expected occurred_at day]
+    ["Visit on 2026-09-12 was cancelled.", "denied_visit", "2026-09-12"],
+    ["She denied the exchange on 9/12.", "denied_visit", "2026-09-12"],
+    ["Pickup on 2026-09-12 was 45 minutes late.", "late_exchange", "2026-09-12"],
+    ["Limited time with the kids since 2026-04-19.", "other", "2026-04-19"],
+    ["She refused my call with Sam on 9/12.", "denied_visit", "2026-09-12"],
+  ];
+  for (const [vent, type, day] of cases) {
+    const events = extractFields(vent, { referenceDate: REF });
+    assert.equal(events.length, 1, `written 0 for: ${vent}`);
+    assert.equal(events[0].event_type, type, vent);
+    assert.equal(String(events[0].occurred_at).slice(0, 10), day, `wrong date for: ${vent}`);
+  }
+  // No mentioned date → current behavior: the reference day stands.
+  const undated = extractFields("She cancelled the visit again.", { referenceDate: REF });
+  assert.equal(undated.length, 1);
+  assert.equal(String(undated[0].occurred_at).slice(0, 10), "2026-09-20");
 });
 
 test("dated refusal notice carries the named date, not the venting day", async () => {
