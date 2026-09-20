@@ -26,7 +26,8 @@ const EVENT_TYPES = new Set([
   "other",
 ]);
 
-const DIRECTIONS = new Set(["outgoing", "incoming", "pull"]);
+// 'draft' = never sent (sent_at null) and never verified — draft ≠ send.
+const DIRECTIONS = new Set(["outgoing", "incoming", "pull", "draft"]);
 
 const DOC_TYPES = new Set([
   "statement",
@@ -104,10 +105,20 @@ export class Vault {
       channel: row.channel ?? null,
       body_cold: row.body_cold ?? null,
       sent_at: row.sent_at ?? null,
+      draft_kind: row.draft_kind ?? null,
+      soft_grade: row.soft_grade ?? null,
     };
     this.communications.push(rec);
     log("comm.insert", { table: "communications", id: rec.id, dad: rec.dad_id, pipe: rec.pipe });
     return rec;
+  }
+
+  // Drafts only — the never-sent communications (direction='draft').
+  listDrafts(dadId) {
+    return this.communications
+      .filter((c) => c.dad_id === dadId && c.direction === "draft")
+      .slice()
+      .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
   }
 
   insertDocument(dadId, row) {
@@ -225,6 +236,12 @@ export class Vault {
       this_week: patch.this_week ?? existing?.this_week ?? null,
       missing: patch.missing ?? existing?.missing ?? [],
       next_action: patch.next_action ?? existing?.next_action ?? null,
+      last_next: patch.last_next ?? existing?.last_next ?? null,
+      last_next_at: patch.last_next_at ?? existing?.last_next_at ?? null,
+      this_week_done: patch.this_week_done ?? existing?.this_week_done ?? null,
+      this_week_total: patch.this_week_total ?? existing?.this_week_total ?? null,
+      last_next_kind: patch.last_next_kind ?? existing?.last_next_kind ?? null,
+      last_ask_summary: patch.last_ask_summary ?? existing?.last_ask_summary ?? null,
       updated_at: new Date().toISOString(),
     };
     this.state.set(dadId, rec);
@@ -245,6 +262,28 @@ export class Vault {
 
   getState(dadId) {
     return this.state.get(dadId) ?? null;
+  }
+
+  // Return loop: stamp last_next = the current One Next, so "Last time: ___"
+  // reflects what the dad was actually asked. Empty next_action → nothing is
+  // stamped and last_next comes back null — a "last time" is never invented.
+  beginReturn(dadId) {
+    const existing = this.getState(dadId);
+    if (!existing) {
+      const err = new Error("unknown dad");
+      err.status = 404;
+      throw err;
+    }
+    const last_next = existing.next_action ?? null;
+    if (last_next) {
+      this.upsertState(dadId, { last_next, last_next_at: new Date().toISOString() });
+    }
+    log("state.return", { table: "state", dad: dadId, has_next: Boolean(last_next) });
+    return {
+      last_next,
+      last_next_kind: existing.last_next_kind ?? null,
+      last_ask_summary: existing.last_ask_summary ?? null,
+    };
   }
 
   // POST /vault/provision — insert-only. Never used by GET /vault/state.
@@ -278,7 +317,9 @@ export class Vault {
       throw err;
     }
     const missing = [...(existing.missing ?? [])];
-    if (!missing.includes(item)) missing.push(item);
+    // Short-checklist rail: missing holds at most 7 items — a full list
+    // takes no more chase items until something clears.
+    if (!missing.includes(item) && missing.length < 7) missing.push(item);
     // Edge needs exactly one next_action; the chase item becomes it when
     // nothing else is queued.
     const next_action = existing.next_action ?? item;

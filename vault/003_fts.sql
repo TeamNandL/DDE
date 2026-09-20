@@ -29,12 +29,21 @@ alter table documents
   ) stored;
 create index if not exists documents_search_tsv_idx on documents using gin (search_tsv);
 
+-- array_to_string() is only STABLE, so it cannot sit in a generated column
+-- on stock Postgres ("generation expression is not immutable" — boot died
+-- on any fresh database). This IMMUTABLE wrapper is safe: joining a text[]
+-- with a space has no config/locale dependence. No semicolon inside $$ so
+-- the app's statement splitter keeps it whole.
+create or replace function dde_join_words(arr text[]) returns text
+  language sql immutable parallel safe
+  as $$ select coalesce(array_to_string(arr, ' '), '') $$;
+
 -- state: this_week / missing / next_action
 alter table state
   add column if not exists search_tsv tsvector
   generated always as (
     setweight(to_tsvector('english', coalesce(this_week, '')), 'A') ||
-    setweight(to_tsvector('english', coalesce(array_to_string(missing, ' '), '')), 'B') ||
+    setweight(to_tsvector('english', dde_join_words(missing)), 'B') ||
     setweight(to_tsvector('english', coalesce(next_action, '')), 'A')
   ) stored;
 create index if not exists state_search_tsv_idx on state using gin (search_tsv);
@@ -44,6 +53,6 @@ alter table month_summary
   add column if not exists search_tsv tsvector
   generated always as (
     setweight(to_tsvector('english', coalesce(summary_text, '')), 'A') ||
-    setweight(to_tsvector('english', coalesce(array_to_string(highlights, ' '), '')), 'B')
+    setweight(to_tsvector('english', dde_join_words(highlights)), 'B')
   ) stored;
 create index if not exists month_summary_search_tsv_idx on month_summary using gin (search_tsv);

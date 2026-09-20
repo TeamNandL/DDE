@@ -215,7 +215,16 @@ test("HTTP BFF: GET unknown dad → 404; POST provision → 200; GET that dad �
     assert.equal(hit.status, 200);
     assert.equal(hit.data.dad_id, unknown);
     assert.equal(hit.data.phase, "intake");
-    assert.deepEqual(hit.data.missing, []);
+    // Provision auto-seeds the kids_facts checklist (5 blanks, 0 of 5).
+    assert.deepEqual(hit.data.missing, [
+      "Kids school name",
+      "Teacher name (oldest)",
+      "Pediatrician / clinic name",
+      "After-school pickup person",
+      "Emergency contact relationship",
+    ]);
+    assert.equal(hit.data.this_week_total, 5);
+    assert.equal(hit.data.this_week_done, 0);
     assert.equal(hit.data.next_action, null);
 
     const again = await jsonReq(s.base, "POST", "/vault/provision", {

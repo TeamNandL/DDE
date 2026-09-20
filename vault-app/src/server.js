@@ -34,10 +34,17 @@ const MAX_BODY = 64 * 1024;
 export const PHASE1_ROUTES = [
   "POST /vault/intake",
   "POST /vault/notice",
+  "POST /vault/return",
+  "POST /vault/missing/fill",
+  "POST /vault/missing/seed",
   "POST /vault/provision",
   "GET /vault/state",
   "PUT /vault/state",
+  "GET /vault/progress",
+  "GET /vault/chip_entry",
   "POST /vault/comms/cold",
+  "POST /vault/comms/draft",
+  "GET /vault/comms/drafts",
   "POST /vault/comms/pull",
   "GET /vault/export/verified",
   "GET /vault/search",
@@ -187,15 +194,73 @@ export async function handleBffRequest(bff, req, url, body) {
       err.status = 400;
       throw err;
     }
-    log("http.intake", { dad: dad_id });
+    let source;
+    if (body.source !== undefined && body.source !== null && body.source !== "") {
+      if (body.source !== "statement") {
+        const err = new Error("unknown source");
+        err.status = 400;
+        throw err;
+      }
+      source = body.source;
+    }
+    log("http.intake", { dad: dad_id, source: source ?? "vent" });
     return {
       status: 200,
       body: await bff.postVaultIntake({
         dad_id,
         text,
         make_notice: body.make_notice === true,
+        source,
       }),
     };
+  }
+
+  if (method === "POST" && path === "/vault/return") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    // Absent answer = greeting only; a PRESENT answer must carry words.
+    let answer;
+    if (body.answer !== undefined && body.answer !== null) {
+      if (typeof body.answer !== "string" || !body.answer.trim()) {
+        const err = new Error("answer must be a non-empty string");
+        err.status = 400;
+        throw err;
+      }
+      answer = body.answer;
+    }
+    // Log hygiene: ids/flags only — never the line or the answer.
+    log("http.return", { dad: dad_id, answered: Boolean(answer) });
+    return { status: 200, body: await bff.postVaultReturn({ dad_id, answer }) };
+  }
+
+  if (method === "POST" && path === "/vault/missing/seed") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    let pack;
+    if (body.pack !== undefined && body.pack !== null && body.pack !== "") {
+      if (typeof body.pack !== "string") {
+        const err = new Error("pack must be a string");
+        err.status = 400;
+        throw err;
+      }
+      pack = body.pack;
+    }
+    log("http.missing.seed", { dad: dad_id });
+    return { status: 200, body: await bff.postMissingSeed({ dad_id, pack }) };
+  }
+
+  if (method === "POST" && path === "/vault/missing/fill") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    const answer = typeof body.answer === "string" ? body.answer : "";
+    if (!answer.trim()) {
+      const err = new Error("answer is required");
+      err.status = 400;
+      throw err;
+    }
+    // Log hygiene: ids only — never the answer or the item.
+    log("http.missing.fill", { dad: dad_id });
+    return { status: 200, body: await bff.postMissingFill({ dad_id, answer }) };
   }
 
   if (method === "POST" && path === "/vault/notice") {
@@ -233,6 +298,22 @@ export async function handleBffRequest(bff, req, url, body) {
     return { status: 200, body: state };
   }
 
+  if (method === "GET" && path === "/vault/chip_entry") {
+    // Read-only: never writes, never stamps last_next.
+    const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
+    await gateDad(bff, req, dad_id);
+    log("http.chip_entry", { dad: dad_id });
+    return { status: 200, body: await bff.getChipEntry({ dad_id }) };
+  }
+
+  if (method === "GET" && path === "/vault/progress") {
+    // Read-only, same gate as state.
+    const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
+    await gateDad(bff, req, dad_id);
+    log("http.progress", { dad: dad_id });
+    return { status: 200, body: await bff.getVaultProgress({ dad_id }) };
+  }
+
   if (method === "POST" && path === "/vault/comms/cold") {
     const dad_id = requireDadId(body.dad_id);
     await gateDad(bff, req, dad_id);
@@ -243,6 +324,29 @@ export async function handleBffRequest(bff, req, url, body) {
     }
     log("http.comms.cold", { dad: dad_id });
     return { status: 200, body: await bff.postCommsCold(body) };
+  }
+
+  if (method === "POST" && path === "/vault/comms/draft") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    if (typeof body.body !== "string" || !body.body.trim()) {
+      const err = new Error("body is required");
+      err.status = 400;
+      throw err;
+    }
+    // Log hygiene: ids only — never the draft text.
+    log("http.comms.draft", { dad: dad_id });
+    return {
+      status: 200,
+      body: await bff.postCommsDraft({ dad_id, body: body.body, kind: body.kind }),
+    };
+  }
+
+  if (method === "GET" && path === "/vault/comms/drafts") {
+    const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
+    await gateDad(bff, req, dad_id);
+    log("http.comms.drafts", { dad: dad_id });
+    return { status: 200, body: await bff.getCommsDrafts({ dad_id }) };
   }
 
   if (method === "POST" && path === "/vault/comms/pull") {

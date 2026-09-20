@@ -54,13 +54,26 @@ export class SqlVault {
     const id = randomUUID();
     await this.exec(
       `insert into communications (id, dad_id, pipe, source_ref, raw_quote,
-                                   direction, channel, body_cold, sent_at)
+                                   direction, channel, body_cold, sent_at, draft_kind, soft_grade)
        values (${lit(id)}, ${lit(dadId)}, ${lit(row.pipe)}, ${lit(row.source_ref ?? null)},
                ${lit(row.raw_quote ?? null)}, ${lit(row.direction)}, ${lit(row.channel ?? null)},
-               ${lit(row.body_cold ?? null)}, ${lit(row.sent_at ?? null)});`,
+               ${lit(row.body_cold ?? null)}, ${lit(row.sent_at ?? null)},
+               ${lit(row.draft_kind ?? null)}, ${lit(row.soft_grade ?? null)});`,
     );
     log("comm.insert", { table: "communications", id, dad: dadId, pipe: row.pipe });
     return { id, dad_id: dadId, ...row };
+  }
+
+  // Drafts only — the never-sent communications (direction='draft').
+  async listDrafts(dadId) {
+    return (
+      (await this.exec(
+        `select id, dad_id, pipe, direction, body_cold, draft_kind, soft_grade, created_at
+           from communications
+          where dad_id = ${lit(dadId)} and direction = 'draft'
+          order by created_at;`,
+      )) ?? []
+    );
   }
 
   // statement → notice: stamp noticed_at/noticed_text on one of the dad's
@@ -109,6 +122,7 @@ export class SqlVault {
     await this.exec(
       `update state set
          missing = case when ${lit(item)} = any(state.missing)
+                          or cardinality(state.missing) >= 7
                         then state.missing
                         else array_append(state.missing, ${lit(item)}::text) end,
          next_action = coalesce(state.next_action, ${lit(item)}),
@@ -149,6 +163,10 @@ export class SqlVault {
          this_week = coalesce(${lit(patch.this_week ?? null)}, state.this_week),
          missing = ${patch.missing ? litArr(patch.missing) : "state.missing"},
          next_action = coalesce(${lit(patch.next_action ?? null)}, state.next_action),
+         this_week_done = coalesce(${lit(patch.this_week_done ?? null)}::integer, state.this_week_done),
+         this_week_total = coalesce(${lit(patch.this_week_total ?? null)}::integer, state.this_week_total),
+         last_next_kind = coalesce(${lit(patch.last_next_kind ?? null)}, state.last_next_kind),
+         last_ask_summary = coalesce(${lit(patch.last_ask_summary ?? null)}, state.last_ask_summary),
          updated_at = now()
        where dad_id = ${lit(dadId)};`,
     );
@@ -158,10 +176,38 @@ export class SqlVault {
 
   async getState(dadId) {
     const rows = await this.exec(
-      `select dad_id, phase, this_week, missing, next_action, updated_at
+      `select dad_id, phase, this_week, missing, next_action, last_next,
+              last_next_at, this_week_done, this_week_total,
+              last_next_kind, last_ask_summary, updated_at
          from state where dad_id = ${lit(dadId)};`,
     );
     return rows?.[0] ?? null;
+  }
+
+  // Return loop: stamp last_next = current next_action (see vault.js twin).
+  // Empty next_action stamps nothing — a "last time" is never invented.
+  // Requires vault/005_return.sql.
+  async beginReturn(dadId) {
+    const existing = await this.getState(dadId);
+    if (!existing) {
+      const e = new Error("unknown dad");
+      e.status = 404;
+      throw e;
+    }
+    const last_next = existing.next_action ?? null;
+    if (last_next) {
+      await this.exec(
+        `update state set last_next = state.next_action, last_next_at = now(),
+                          updated_at = now()
+          where dad_id = ${lit(dadId)} and state.next_action is not null;`,
+      );
+    }
+    log("state.return", { table: "state", dad: dadId, has_next: Boolean(last_next) });
+    return {
+      last_next,
+      last_next_kind: existing.last_next_kind ?? null,
+      last_ask_summary: existing.last_ask_summary ?? null,
+    };
   }
 
   // POST /vault/provision — insert-only (no ON CONFLICT). GET stays read-only.

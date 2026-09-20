@@ -36,11 +36,17 @@ test("events time-log + state checklist come from the vault; verified stays clea
   assert.ok(!/spiteful|destroying|on purpose/i.test(events[0].raw_quote));
   assert.ok(!/spiteful|destroying/i.test(events[0].notes));
 
+  // Provision auto-seeds kids_facts, so the chase item lands after the
+  // 5 seeded blanks; One Next is still the chase item (next_action was
+  // null at seed time).
   const checklist = await stateMissingChecklist(vault, DEMO_DAD_ID);
-  assert.ok(checklist.length >= 1);
-  assert.equal(checklist[0].missing_item, "verify count in OFW record for September");
-  assert.equal(checklist[0].is_next_action, "yes");
-  assert.ok(!/\d/.test(checklist[0].missing_item));
+  assert.ok(checklist.length >= 6);
+  const chase = checklist.find(
+    (r) => r.missing_item === "verify count in OFW record for September",
+  );
+  assert.ok(chase, "chase item present alongside seeded blanks");
+  assert.equal(chase.is_next_action, "yes");
+  assert.ok(!/\d/.test(chase.missing_item));
 
   const verified = await verifiedExportView(vault, DEMO_DAD_ID);
   assert.equal(verified.length, 1, "demo OFW pull is the only verified row");

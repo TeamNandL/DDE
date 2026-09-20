@@ -11,10 +11,15 @@ FROM node:22-alpine
 
 WORKDIR /app
 
-# Phase 1 + FTS + noticed. Never copy vault/002_rls_plan.sql — RLS stays off.
+# Phase 1 + FTS + noticed + return. Never copy vault/002_rls_plan.sql — RLS stays off.
 COPY vault/001_schema.sql /app/vault/001_schema.sql
 COPY vault/003_fts.sql /app/vault/003_fts.sql
 COPY vault/004_noticed.sql /app/vault/004_noticed.sql
+COPY vault/005_return.sql /app/vault/005_return.sql
+COPY vault/006_progress.sql /app/vault/006_progress.sql
+COPY vault/007_cold_ask.sql /app/vault/007_cold_ask.sql
+COPY vault/008_drafts.sql /app/vault/008_drafts.sql
+COPY vault/009_draft_grade.sql /app/vault/009_draft_grade.sql
 
 WORKDIR /app/vault-app
 COPY vault-app/package.json vault-app/package-lock.json ./

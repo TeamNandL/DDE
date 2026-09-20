@@ -1,6 +1,11 @@
-# Chip operator blurb (paste into Chip description)
+# Chip operator blurb (ENG setup notes — not a public paste)
 
-Copy everything below the line into the Chip / Dad Grok template description.
+Two-object model: the **public** Chip description comes from
+[`CHIP_PUBLIC_TEMPLATE.md`](CHIP_PUBLIC_TEMPLATE.md) (demo/door, zero
+secrets — test-enforced) and each **per-dad** Chip from
+[`CHIP_DAD_TEMPLATE.md`](CHIP_DAD_TEMPLATE.md) (vault-bound, placeholders
+filled at bind). The block below is the operator/eng reference only —
+never paste it into the public object (it names live bases and auth).
 
 ---
 

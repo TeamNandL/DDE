@@ -13,8 +13,10 @@
 // Rule (§5): there is NO endpoint that returns claim rows to Reporting.
 
 import { randomUUID } from "node:crypto";
-import { extract } from "./extract.js";
+import { extract, harmCheck, hasVenom, stripVenom } from "./extract.js";
 import { log } from "./logger.js";
+import { stripPii } from "./pii.js";
+import { clampProgressPatch, progressChipLine, progressLine, softGrade } from "./progress.js";
 import { createMemoryTokenStore, hashToken } from "./tokens.js";
 import { parseSearchOpts } from "./search.js";
 
@@ -22,6 +24,53 @@ function unknownDad() {
   const err = new Error("unknown dad");
   err.status = 404;
   return err;
+}
+
+// Tone flags the GRADE catches but the venom STRIP does not drop —
+// "This is stupid." is storable, just not send-ready as written.
+const TONE_RE = /\b(stupid|ridiculous|pathetic|idiotic|insane|absurd|a joke)\b/i;
+
+// Draft soft grade — ONE heuristic, no LLM: "ready" = no venom (neither
+// stripped at write nor present), no tone flag, and fits one cold-ask
+// breath (<= 280 chars); otherwise "tighten". Coaching, never a gate.
+// The grade is computed ONCE at the draft POST and PERSISTED — reads
+// must return the stored grade, never recompute from the cleaned body
+// (the venom that earned "tighten" is already gone from it).
+export function draftSoftGrade(bodyText, venomWasStripped = false) {
+  const text = String(bodyText ?? "");
+  return !venomWasStripped && !hasVenom(text) && !TONE_RE.test(text) && text.length <= 280
+    ? "ready"
+    : "tighten";
+}
+
+// Missing-seed packs: PII-safe blank LABELS only — prompts for facts the
+// dad fills in later via /vault/missing/fill, never case data themselves.
+// ≤ 7 items (checklist rail) and ≤ 80 chars each.
+export const SEED_PACKS = {
+  kids_facts: [
+    "Kids school name",
+    "Teacher name (oldest)",
+    "Pediatrician / clinic name",
+    "After-school pickup person",
+    "Emergency contact relationship",
+  ],
+};
+
+// Return-loop greeting for Chip. Plain text only — never a token, URL, or
+// dad_id (Chip carries auth separately). Null when there is no Next: an
+// empty Next is never invented into a "last time". PII-stripped as a
+// guarantee even though next_action is chase text.
+export function returnLine(lastNext) {
+  if (!lastNext) return null;
+  return stripPii(`Last time: ${lastNext}. How'd it go?`).text;
+}
+
+// Cold-ask variant: when the last Next was a cold ask, greet with its
+// short summary instead of the raw next_action wording. Same rails:
+// plain speech, PII-stripped, null when there is nothing to say.
+export function coldAskLine(summary) {
+  if (typeof summary !== "string" || !summary.trim()) return null;
+  return stripPii(`Last time: cold ask — ${summary.trim()}. How'd it go?`).text;
 }
 
 /**
@@ -73,9 +122,12 @@ export function makeBff(vault, opts = {}) {
     // — Intake writes claim. Requires provisioned dad — never creates state.
     // make_notice=true additionally notices the first written event and adds
     // {noticed_text, event_id}; the plain response shape is unchanged.
-    async postVaultIntake({ dad_id, text, make_notice }, opts = {}) {
+    async postVaultIntake({ dad_id, text, make_notice, source }, opts = {}) {
       await requireDad(dad_id);
-      const { written, chase, event_ids = [] } = await extract(vault, dad_id, text, opts);
+      const { written, chase, event_ids = [] } = await extract(vault, dad_id, text, {
+        ...opts,
+        source: source ?? opts.source,
+      });
       const out = { written, chase };
       if (make_notice === true && event_ids.length > 0) {
         const noticed = await vault.noticeEvent(dad_id, event_ids[0]);
@@ -83,6 +135,187 @@ export function makeBff(vault, opts = {}) {
         out.event_id = noticed.event_id;
       }
       return out;
+    },
+
+    // POST /vault/return {dad_id, answer?}
+    //   -> {last_next, line, progress_line, written?}
+    // Return loop: stamps state.last_next from the current One Next and hands
+    // Chip the greeting line ({line: null} when no Next — nothing invented).
+    // An answer rides the intake rails — harm first (heard → discarded,
+    // written:0), then PII strip, then venom strip — and becomes exactly ONE
+    // claim event ('other', notes name the return beat, raw_quote = the
+    // stripped answer). Never verified. No answer → no claim write, no
+    // written key (existing behavior).
+    async postVaultReturn({ dad_id, answer }, opts = {}) {
+      const state = await requireDad(dad_id);
+      const { last_next, last_next_kind, last_ask_summary } = await vault.beginReturn(dad_id);
+      // Cold-ask hook: prefer the ask summary; otherwise the generic line.
+      const line =
+        last_next_kind === "cold_ask" && last_ask_summary
+          ? coldAskLine(last_ask_summary)
+          : returnLine(last_next);
+      // Optional second beat for Chip: the soft-progress line, spoken once.
+      // Null when there is nothing to say (return stamping never alters
+      // the progress fields, so the pre-stamp state is accurate).
+      const out = { last_next, line, progress_line: progressChipLine(state) };
+      if (typeof answer === "string" && answer.trim()) {
+        if (harmCheck(answer)) {
+          // §4 rail: zero rows, zero retention, zero log lines.
+          out.written = 0;
+        } else {
+          const cold = stripVenom(stripPii(answer).text).trim();
+          const rec = await vault.insertEvent(dad_id, {
+            event_type: "other",
+            occurred_at: opts.referenceDate
+              ? new Date(opts.referenceDate).toISOString()
+              : new Date().toISOString(),
+            pipe: "claim",
+            raw_quote: cold || null,
+            notes:
+              last_next_kind === "cold_ask"
+                ? "Return: cold ask follow-up"
+                : "Return: how'd it go",
+            kids: [],
+          });
+          out.written = 1;
+          log("return.answer", { dad: dad_id, event: rec.id });
+        }
+      }
+      log("return", {
+        dad: dad_id,
+        has_next: Boolean(last_next),
+        answered: Boolean(typeof answer === "string" && answer.trim()),
+      });
+      return out;
+    },
+
+    // GET /vault/chip_entry {dad_id}
+    //   -> {progress_line, missing_one, next_action, return_line}
+    // Read-only speakable bundle: everything Chip says at entry without
+    // composing. Nulls when there is nothing — counters and greetings are
+    // never invented. return_line is the SAME text POST /vault/return
+    // would greet with, composed from state without stamping last_next —
+    // the return POST remains the only write on that path.
+    async getChipEntry({ dad_id }) {
+      const state = await requireDad(dad_id);
+      const next = state.next_action ? stripPii(String(state.next_action)).text : null;
+      const firstMissing = state.missing?.[0];
+      const return_line =
+        state.last_next_kind === "cold_ask" && state.last_ask_summary
+          ? coldAskLine(state.last_ask_summary)
+          : returnLine(next);
+      const out = {
+        progress_line: progressChipLine(state),
+        missing_one: firstMissing ? stripPii(String(firstMissing)).text : null,
+        next_action: next,
+        return_line,
+      };
+      // Latest-draft hint: newest draft only, read-only, omitted entirely
+      // when the dad has no drafts. preview = first ~80 chars of the
+      // stored (already-stripped) body, belt-stripped for legacy rows;
+      // soft_grade recomputed with the same heuristic as the draft POST.
+      const drafts = await vault.listDrafts(dad_id);
+      if (drafts.length > 0) {
+        const newest = drafts[drafts.length - 1];
+        const bodyText = stripPii(String(newest.body_cold ?? "")).text;
+        out.latest_draft = {
+          // STORED grade — must match what the draft POST returned.
+          // Recompute only for legacy rows written before persistence.
+          soft_grade: newest.soft_grade ?? draftSoftGrade(bodyText),
+          preview: bodyText.slice(0, 80),
+        };
+      }
+      log("chip_entry", {
+        dad: dad_id,
+        has_progress: Boolean(out.progress_line),
+        has_next: Boolean(next),
+      });
+      return out;
+    },
+
+    // POST /vault/missing/seed {dad_id, pack?} -> {written, missing_one, progress_line}
+    // Seeds an EMPTY checklist with PII-safe blanks (labels only, no case
+    // data). Non-empty missing is never overwritten. Counters are set to
+    // 5/0 only when BOTH are null — existing counters are never invented
+    // over. No event/comms rows — claim ≠ verified untouched.
+    async postMissingSeed({ dad_id, pack }) {
+      const packName = pack ?? "kids_facts";
+      const labels = SEED_PACKS[packName];
+      if (!labels) {
+        const err = new Error("unknown pack");
+        err.status = 400;
+        throw err;
+      }
+      const state = await requireDad(dad_id);
+      const missing = state.missing ?? [];
+      if (missing.length > 0) {
+        // No overwrite: report what's already open, write nothing.
+        return {
+          written: 0,
+          missing_one: stripPii(String(missing[0])).text,
+          progress_line: progressChipLine(state),
+        };
+      }
+      const patch = { missing: labels.map((l) => stripPii(l).text) };
+      if (state.this_week_total == null && state.this_week_done == null) {
+        patch.this_week_total = labels.length;
+        patch.this_week_done = 0;
+      }
+      const newState = await vault.updateState(dad_id, patch);
+      log("missing.seed", { dad: dad_id, pack: packName, items: labels.length });
+      return {
+        written: 1,
+        missing_one: newState.missing?.[0] ?? null,
+        progress_line: progressChipLine(newState),
+      };
+    },
+
+    // POST /vault/missing/fill {dad_id, answer}
+    //   -> {written, missing_one, progress_line}
+    // Chip asked about missing[0]; the dad's answer closes it. The answer
+    // rides the same rails as intake: harm first (heard → discarded,
+    // nothing shifted), then PII strip, then venom strip. The closed item
+    // becomes ONE claim event ('other', notes name the item, raw_quote =
+    // the stripped answer) — simplest durable path, never verified.
+    // this_week_done bumps only when a total is set and not yet reached.
+    async postMissingFill({ dad_id, answer }, opts = {}) {
+      const state = await requireDad(dad_id);
+      const missing = state.missing ?? [];
+      if (missing.length === 0) {
+        // Empty checklist: nothing to close, nothing invented.
+        return { written: 0, missing_one: null, progress_line: null };
+      }
+      if (harmCheck(answer)) {
+        // §4 rail: zero rows, zero retention, nothing shifted or bumped.
+        return {
+          written: 0,
+          missing_one: stripPii(String(missing[0])).text,
+          progress_line: progressChipLine(state),
+        };
+      }
+      const cold = stripVenom(stripPii(answer).text).trim();
+      const item = stripPii(String(missing[0])).text;
+      const rec = await vault.insertEvent(dad_id, {
+        event_type: "other",
+        occurred_at: opts.referenceDate
+          ? new Date(opts.referenceDate).toISOString()
+          : new Date().toISOString(),
+        pipe: "claim",
+        raw_quote: cold || null,
+        notes: `Checklist item closed: ${item}`,
+        kids: [],
+      });
+      const patch = { missing: missing.slice(1) };
+      const total = state.this_week_total ?? null;
+      const done = state.this_week_done ?? 0;
+      if (total !== null && done < total) patch.this_week_done = done + 1;
+      const newState = await vault.updateState(dad_id, patch);
+      log("missing.fill", { dad: dad_id, event: rec.id, left: patch.missing.length });
+      return {
+        written: 1,
+        missing_one: newState.missing?.[0] ? stripPii(String(newState.missing[0])).text : null,
+        progress_line: progressChipLine(newState),
+      };
     },
 
     // POST /vault/notice {dad_id, event_id?} -> {noticed_text, event_id}
@@ -100,8 +333,13 @@ export function makeBff(vault, opts = {}) {
       return vault.getState(dad_id);
     },
 
-    // POST /vault/provision {dad_id?} -> {dad_id, token}
+    // POST /vault/provision {dad_id?} -> {dad_id, token, missing_one, progress_line}
     // ONLY path that creates state. Returns raw token once; store keeps hash only.
+    // Auto-seeds the kids_facts checklist via the SAME seed helper (no
+    // duplicate pack): a fresh provision has empty missing + null counters,
+    // so the helper applies 5 blanks and total=5/done=0; its no-overwrite
+    // guard keeps any non-empty missing untouched. missing_one +
+    // progress_line come back so Chip can speak immediately.
     async postVaultProvision({ dad_id } = {}) {
       const id = dad_id || randomUUID();
       await vault.provisionState(id);
@@ -111,18 +349,49 @@ export function makeBff(vault, opts = {}) {
         token_hash: hashToken(token),
         created_at: new Date().toISOString(),
       });
-      log("provision", { dad: id });
-      return { dad_id: id, token };
+      const seeded = await this.postMissingSeed({ dad_id: id });
+      log("provision", { dad: id, seeded: seeded.written });
+      return {
+        dad_id: id,
+        token,
+        missing_one: seeded.missing_one,
+        progress_line: seeded.progress_line,
+      };
     },
 
-    // PUT /vault/state {dad_id, phase?, this_week?, missing?, next_action?}
-    // Update-only — missing dad → 404 (no silent upsert).
+    // PUT /vault/state {dad_id, phase?, this_week?, missing?, next_action?,
+    //                   this_week_done?, this_week_total?}
+    // Update-only — missing dad → 404 (no silent upsert). Progress rails
+    // clamp here, once, for both stores: total 3..7, done 0..total,
+    // missing ≤ 7 short strings.
     async putVaultState({ dad_id, ...patch }) {
       await requireDad(dad_id);
+      const clamped = clampProgressPatch(patch);
       if (typeof vault.updateState === "function") {
-        return vault.updateState(dad_id, patch);
+        return vault.updateState(dad_id, clamped);
       }
-      return vault.upsertState(dad_id, patch);
+      return vault.upsertState(dad_id, clamped);
+    },
+
+    // GET /vault/progress {dad_id} -> {line, missing_one, grade}
+    // Plain Chip speech, read-only. line null until both counters exist;
+    // grade is warm or null — never shame; missing_one = first checklist
+    // item or null (empty missing is fine).
+    async getVaultProgress({ dad_id }) {
+      const state = await requireDad(dad_id);
+      // missing_one is spoken by Chip; the write path strips PII, and this
+      // read-side strip covers rows written before that rail existed.
+      const firstMissing = state.missing?.[0];
+      const out = {
+        line: progressLine(state),
+        missing_one: firstMissing ? stripPii(String(firstMissing)).text : null,
+        grade: softGrade(state),
+        // The one ADHD-short line Chip speaks: counters + at most one open
+        // item, or null — never invented.
+        progress_line: progressChipLine(state),
+      };
+      log("progress", { dad: dad_id, has_line: Boolean(out.line), has_grade: Boolean(out.grade) });
+      return out;
     },
 
     // POST /vault/comms/cold {dad_id, body_cold, channel} -> {id}
@@ -136,6 +405,59 @@ export function makeBff(vault, opts = {}) {
         pipe: "claim",
       });
       return { id: rec.id };
+    },
+
+    // POST /vault/comms/draft {dad_id, body, kind?} -> {written, draft_id, body}
+    // Cold draft store — draft ≠ send. Harm first (heard → discarded,
+    // written:0, no row, no log line), then PII strip, then venom strip;
+    // the draft lands as direction='draft', sent_at null, pipe='claim' —
+    // never sent, never verified. NO send endpoint exists for drafts.
+    async postCommsDraft({ dad_id, body, kind }) {
+      await requireDad(dad_id);
+      if (kind !== undefined && kind !== null && kind !== "cold_ask") {
+        const err = new Error("unknown draft kind");
+        err.status = 400;
+        throw err;
+      }
+      if (harmCheck(body)) {
+        // No soft_grade on a discarded draft — nothing to grade.
+        return { written: 0 };
+      }
+      const piiClean = stripPii(body).text;
+      const venomStripped = hasVenom(piiClean);
+      const cold = stripVenom(piiClean).trim();
+      if (!cold) {
+        // Nothing storable survived the strips (pure venom) — no row.
+        return { written: 0 };
+      }
+      // Grade from the PRE-strip knowledge, persisted with the row so
+      // reads return the same grade the POST did.
+      const soft_grade = draftSoftGrade(cold, venomStripped);
+      const rec = await vault.insertCommunication(dad_id, {
+        direction: "draft",
+        channel: null,
+        body_cold: cold,
+        sent_at: null,
+        pipe: "claim",
+        draft_kind: kind ?? null,
+        soft_grade,
+      });
+      log("comms.draft", { dad: dad_id, id: rec.id, kind: kind ?? "none", grade: soft_grade });
+      return { written: 1, draft_id: rec.id, body: cold, soft_grade };
+    },
+
+    // GET /vault/comms/drafts {dad_id} -> [{draft_id, body, kind, created_at}]
+    // Drafts ONLY — sent/pulled communications never appear here.
+    async getCommsDrafts({ dad_id }) {
+      await requireDad(dad_id);
+      const rows = await vault.listDrafts(dad_id);
+      log("comms.drafts.list", { dad: dad_id, drafts: rows.length });
+      return rows.map((r) => ({
+        draft_id: r.id,
+        body: r.body_cold ?? "",
+        kind: r.draft_kind ?? null,
+        created_at: r.created_at,
+      }));
     },
 
     // POST /vault/comms/pull {dad_id, channel, source_ref, ...} -> {id}
