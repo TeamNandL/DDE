@@ -26,6 +26,15 @@ function unknownDad() {
   return err;
 }
 
+// Draft soft grade — ONE heuristic, no LLM, shared by the draft POST and
+// the chip_entry recompute: "ready" = no venom (neither stripped at write
+// nor present in the text) and fits one cold-ask breath (<= 280 chars);
+// otherwise "tighten". Coaching, never a gate.
+export function draftSoftGrade(bodyText, venomWasStripped = false) {
+  const text = String(bodyText ?? "");
+  return !venomWasStripped && !hasVenom(text) && text.length <= 280 ? "ready" : "tighten";
+}
+
 // Missing-seed packs: PII-safe blank LABELS only — prompts for facts the
 // dad fills in later via /vault/missing/fill, never case data themselves.
 // ≤ 7 items (checklist rail) and ≤ 80 chars each.
@@ -190,6 +199,19 @@ export function makeBff(vault, opts = {}) {
         next_action: next,
         return_line,
       };
+      // Latest-draft hint: newest draft only, read-only, omitted entirely
+      // when the dad has no drafts. preview = first ~80 chars of the
+      // stored (already-stripped) body, belt-stripped for legacy rows;
+      // soft_grade recomputed with the same heuristic as the draft POST.
+      const drafts = await vault.listDrafts(dad_id);
+      if (drafts.length > 0) {
+        const newest = drafts[drafts.length - 1];
+        const bodyText = stripPii(String(newest.body_cold ?? "")).text;
+        out.latest_draft = {
+          soft_grade: draftSoftGrade(bodyText),
+          preview: bodyText.slice(0, 80),
+        };
+      }
       log("chip_entry", {
         dad: dad_id,
         has_progress: Boolean(out.progress_line),
@@ -403,11 +425,9 @@ export function makeBff(vault, opts = {}) {
         pipe: "claim",
         draft_kind: kind ?? null,
       });
-      // Heuristic soft grade, no LLM: "ready" = nothing had to be stripped
-      // for tone and it fits one cold-ask breath (<= 280 stripped chars);
-      // "tighten" = venom came out or it runs long. The draft is stored
-      // either way — grade is coaching, never a gate.
-      const soft_grade = !venomStripped && cold.length <= 280 ? "ready" : "tighten";
+      // Shared heuristic (see draftSoftGrade). The draft is stored either
+      // way — grade is coaching, never a gate.
+      const soft_grade = draftSoftGrade(cold, venomStripped);
       log("comms.draft", { dad: dad_id, id: rec.id, kind: kind ?? "none", grade: soft_grade });
       return { written: 1, draft_id: rec.id, body: cold, soft_grade };
     },

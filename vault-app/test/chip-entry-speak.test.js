@@ -153,6 +153,57 @@ test("cold-ask state → return_line uses the ask summary", async () => {
   }
 });
 
+test("latest_draft hint: omitted with no drafts; newest draft's grade + 80-char preview; read-only", async () => {
+  const s = await start();
+  try {
+    const { dad_id, token } = await provisionedDad(s.base);
+
+    // No drafts → no latest_draft key at all.
+    const empty = await jsonReq(s.base, "GET", `/vault/chip_entry?dad_id=${dad_id}`, null, { token });
+    assert.ok(!("latest_draft" in empty.data), "latest_draft must be omitted with no drafts");
+
+    // First draft: clean and short → ready; preview is the exact body.
+    const first = await jsonReq(
+      s.base,
+      "POST",
+      "/vault/comms/draft",
+      { dad_id, body: "Confirming Thursday pickup time.", kind: "cold_ask" },
+      { token },
+    );
+    assert.equal(first.data.written, 1);
+    const one = await jsonReq(s.base, "GET", `/vault/chip_entry?dad_id=${dad_id}`, null, { token });
+    assert.deepEqual(one.data.latest_draft, {
+      soft_grade: "ready",
+      preview: "Confirming Thursday pickup time.",
+    });
+
+    // Second draft is NEWER and long (> 280 clean) → tighten, 80-char preview.
+    const longBody = "Requesting a calm written plan for the fall schedule. ".repeat(7).trim();
+    await jsonReq(s.base, "POST", "/vault/comms/draft", { dad_id, body: longBody }, { token });
+    const two = await jsonReq(s.base, "GET", `/vault/chip_entry?dad_id=${dad_id}`, null, { token });
+    assert.equal(two.data.latest_draft.soft_grade, "tighten");
+    assert.equal(two.data.latest_draft.preview, longBody.slice(0, 80));
+    assert.equal(two.data.latest_draft.preview.length, 80);
+    assertChipSafe(two.data.latest_draft.preview);
+
+    // Legacy dirty row (venom snuck into storage pre-rail) → recompute
+    // says tighten, and the preview is belt-stripped of PII.
+    const drafts = s.vault.listDrafts(dad_id);
+    drafts[drafts.length - 1].body_cold = `She is toxic. Call ${PHONE} about the window.`;
+    const dirty = await jsonReq(s.base, "GET", `/vault/chip_entry?dad_id=${dad_id}`, null, { token });
+    assert.equal(dirty.data.latest_draft.soft_grade, "tighten");
+    assert.ok(!dirty.data.latest_draft.preview.includes(PHONE));
+    assert.match(dirty.data.latest_draft.preview, /\[phone\]/);
+
+    // Still read-only: no state stamp, no new rows from any of the GETs.
+    const state = await jsonReq(s.base, "GET", `/vault/state?dad_id=${dad_id}`, null, { token });
+    assert.equal(state.data.last_next, null);
+    assert.equal(s.vault.listDrafts(dad_id).length, 2);
+  } finally {
+    await s.close();
+  }
+});
+
 test("read-only: chip_entry never stamps last_next or writes anything", async () => {
   const s = await start();
   try {

@@ -187,8 +187,13 @@ GET /vault/chip_entry?dad_id=<uuid>
 Authorization: Bearer <token>
 
 → 200 { "progress_line": … | null, "missing_one": … | null,
-        "next_action": … | null, "return_line": … | null }
+        "next_action": … | null, "return_line": … | null,
+        "latest_draft"?: { "soft_grade": "ready"|"tighten", "preview": "<first ~80 chars>" } }
 ```
+
+`latest_draft` is the newest stored draft's hint (grade recomputed with
+the same heuristic as the draft POST); the key is **omitted** when the
+dad has no drafts.
 
 Read-only: everything Chip says at entry, pre-composed and PII-stripped —
 nulls mean say nothing (never invented). `return_line` is the same
