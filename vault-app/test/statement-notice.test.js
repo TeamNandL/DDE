@@ -25,6 +25,26 @@ const RECEIPT_RE = /\bgot it\b|\bupload/i;
 const RECEIPT_RE2 = /\breceived\b|\byour file\b|\bthanks\b/i;
 const DIGIT_RUN = /\d{8,17}/;
 
+// Machine-minted columns: UUIDs and ISO timestamps. They never carry pasted
+// text, and a random UUID trips DIGIT_RUN ~8% of the time (hex runs like
+// "...-56124907cdf5"), so scanning them makes the gate flaky, not stricter.
+// Deny-list, not allow-list: any NEW column is scanned by default.
+const MACHINE_FIELDS = new Set([
+  "id",
+  "dad_id",
+  "created_at",
+  "occurred_at",
+  "scheduled_at",
+  "noticed_at",
+]);
+
+// Everything on the row that could carry the pasted statement, as one string.
+function contentOf(row) {
+  return JSON.stringify(
+    Object.fromEntries(Object.entries(row).filter(([k]) => !MACHINE_FIELDS.has(k))),
+  );
+}
+
 function assertNoticedSafe(text, label) {
   assert.ok(typeof text === "string" && text.trim().length > 0, `${label} empty`);
   assert.doesNotMatch(text, RECEIPT_RE, `${label} receipt tone`);
@@ -89,6 +109,30 @@ test("statement arm: date/amount/payee land in one cold sentence; minimal statem
   assert.equal(minimal[0].notes, "Statement: $89.99.");
 });
 
+// The digit-run gate scans content columns only. Prove that still catches a
+// real leak, and that a digit-heavy UUID no longer counts as one.
+test("digit-run gate: catches a leak in any content column, ignores machine ids", () => {
+  const clean = {
+    id: "16bf71df-ab4b-4eea-ba2c-56124907cdf5", // 8-digit hex run: the 2026-09-26 CI flake
+    dad_id: "00000000-0000-4000-8000-000000000000",
+    created_at: "2026-09-26T19:00:26.562Z",
+    occurred_at: "2026-09-12T12:00:00.000Z",
+    raw_quote: "account #[account], routing [account]. call [phone].",
+    notes: "Statement: $1,250.00 to Maple Street Sitters on 2026-09-12.",
+  };
+  assert.match(JSON.stringify(clean), DIGIT_RUN, "fixture must contain the id digit run");
+  assert.doesNotMatch(contentOf(clean), DIGIT_RUN, "machine ids must not trip the gate");
+
+  // A leak in any content column still fails — including a column added later.
+  for (const col of ["raw_quote", "notes", "noticed_text", "location", "some_future_column"]) {
+    assert.match(
+      contentOf({ ...clean, [col]: "account #12345678" }),
+      DIGIT_RUN,
+      `leak in ${col} must still be caught`,
+    );
+  }
+});
+
 test("RAZOR: statement drop via intake make_notice → one noticed sentence, no receipt tone, no raw PII", async () => {
   const s = await start();
   try {
@@ -112,9 +156,12 @@ test("RAZOR: statement drop via intake make_notice → one noticed sentence, no 
     // Gate 2: stored fields clean too (row + state + logs).
     const [event] = await s.vault.listEvents(dad_id);
     assert.equal(event.pipe, "claim");
-    const storedJson = JSON.stringify(event);
+    const storedJson = contentOf(event);
     assert.doesNotMatch(storedJson, DIGIT_RUN, "stored row raw digit run");
-    for (const v of RAW_PII) assert.ok(!storedJson.includes(v), `stored row leaks ${v}`);
+    // Raw PII is checked against the WHOLE row — a literal account/routing/
+    // phone string in any column is a leak, machine-minted or not.
+    const wholeRow = JSON.stringify(event);
+    for (const v of RAW_PII) assert.ok(!wholeRow.includes(v), `stored row leaks ${v}`);
     assert.match(event.raw_quote, /\[account\]/);
     assert.doesNotMatch(logger.lines().join("\n"), /12345678|021000021|904-555|Maple Street Sitters/);
 
