@@ -4,7 +4,7 @@ Docs only. No vault/product code lives here.
 
 | File | Use |
 | --- | --- |
-| [`SOURCES.md`](SOURCES.md) | Where the three source docs go (not in git yet) |
+| [`SOURCES.md`](SOURCES.md) | Index of the four source docs in source/ (in git) |
 | [`BASELINE.md`](BASELINE.md) | What tip 79fbce1 already does |
 | [`WALK_RUNBOOK.md`](WALK_RUNBOOK.md) | How to run the three-paste walk against tip |
 | [`FRICTION_LOG.md`](FRICTION_LOG.md) | One row per friction item → Patch / Forge |
