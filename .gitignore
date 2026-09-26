@@ -5,3 +5,5 @@ vault-app/exports/
 .env.local
 .env.*.local
 .dde-tokens.json
+walk-out/
+vault-app/walk-out/

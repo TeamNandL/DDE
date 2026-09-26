@@ -1,0 +1,14 @@
+SAMPLE STATEMENT — FICTIONAL
+
+Account holder: [NAME]
+Statement period: 2026-09-01 through 2026-09-20
+Account number: 123456789
+Routing number: 021000021
+Contact phone: 555-123-4567
+Contact email: dad@example.com
+
+Activity:
+- 2026-09-20: Cancelled visit.
+- 2026-09-18: Statement generated.
+
+This is fabricated sample text for redaction testing; no real bank account or person is represented.
