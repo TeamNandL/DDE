@@ -3,6 +3,15 @@
 ADHD-short. Chip (Dad Grok Front Door) talks **only** to the HTTP BFF.
 Never Supabase / Postgres direct. Fake family in demos only.
 
+## Seats (two pipes — never merged)
+
+| Seat | Pipe | Route |
+| --- | --- | --- |
+| Chip | front door — one pipe per message | — |
+| Quill | vent → claim; notice line (`say`: "… Matter to you?") | `POST /vault/intake` + `make_notice` |
+| Coach / Tone | vent hot → one cold draft, draft ≠ send (`say`: "Not sent. Next: …") | `POST /vault/comms/draft` |
+| Eddie | state / One Next | `GET /vault/state` |
+
 ## Two-object Chip (tenant bind)
 
 | Object | Template | Carries |
@@ -219,13 +228,25 @@ greeting `POST /vault/return` gives, but this GET **never stamps
 POST /vault/comms/draft
 { "dad_id": "<uuid>", "body": "<cold ask text>", "kind"?: "cold_ask" }
 → 200 { "written": 1, "draft_id": "<uuid>", "body": "<stripped>",
-        "soft_grade": "ready" | "tighten" }   // ready = nothing stripped for tone and ≤ 280 chars; tighten = venom came out or runs long (stored either way); absent when written:0
+        "soft_grade": "ready" | "tighten",   // ready = nothing stripped for tone and ≤ 280 chars; tighten = venom came out or runs long (stored either way); absent when written:0
+        "mode": "document" | "de_escalate",
+        "say": "Not sent. Next: …" }
 → 200 { "written": 0 }        // harm heard, or nothing survived the strips
 → 400 empty body / unknown kind
 
 GET /vault/comms/drafts?dad_id=<uuid>
 → 200 [ { "draft_id", "body", "kind", "created_at" } ]   // drafts ONLY
 ```
+
+**Coach / Tone seat (vent hot → send cold).** When the dad asks for words
+("help me say something calm…"), Chip writes ONE cold, OFW-ready draft and
+POSTs it here — never to intake. Chip shows the returned `body`, then says
+`say` verbatim: draft ≠ send + exactly one Next, in one beat (no "hang
+tight", no "draft next"). `mode` (Drift 2, de-escalate vs document):
+`document` when the draft asks the co-parent for something on the record
+(appointments, calendar, school, schedule — the medical-calendar ask is the
+textbook case), so the Next is to send it; `de_escalate` otherwise, sending
+optional. Behavior only — never the co-parent's motive.
 
 Drafts are **never sent and never verified** (direction `draft`, no
 `sent_at`, claim pipe) — there is **no send endpoint** for drafts; sending

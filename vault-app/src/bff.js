@@ -43,6 +43,29 @@ export function draftSoftGrade(bodyText, venomWasStripped = false) {
     : "tighten";
 }
 
+// Coach / Tone (vent hot → send cold). Drift 2 — de-escalate vs document:
+// most drafts are de-escalation (sending is optional; silence is fine), but
+// a draft that ASKS the co-parent for something the dad wants on the
+// record (appointments, calendar, school, records, schedule) flips to
+// "document" — here silence throws the evidence away. Behavior words only;
+// never the co-parent's motive. One heuristic, no LLM.
+const ASK_RE = /\b(please|can you|could you|would you|will you|i'?m asking|i am asking|i request|let me know|confirm)\b/i;
+const RECORD_RE =
+  /\b(calendar|appointments?|doctor|dentist|counsel\w*|therap\w*|medical|school|teacher|records?|schedule|pick-?up|drop-?off|exchange)\b/i;
+
+export function draftMode(bodyText) {
+  const text = String(bodyText ?? "");
+  return ASK_RE.test(text) && RECORD_RE.test(text) ? "document" : "de_escalate";
+}
+
+// The ONE beat Chip says after showing the draft body: draft ≠ send plus
+// exactly one Next. No "hang tight", no second step, no menu.
+export function draftSayLine(mode) {
+  return mode === "document"
+    ? "Not sent. Next: send it yourself — it puts your ask on the record."
+    : "Not sent. Next: read it once; send it only if it still fits.";
+}
+
 // Missing-seed packs: PII-safe blank LABELS only — prompts for facts the
 // dad fills in later via /vault/missing/fill, never case data themselves.
 // ≤ 7 items (checklist rail) and ≤ 80 chars each.
@@ -464,8 +487,9 @@ export function makeBff(vault, opts = {}) {
         draft_kind: kind ?? null,
         soft_grade,
       });
-      log("comms.draft", { dad: dad_id, id: rec.id, kind: kind ?? "none", grade: soft_grade });
-      return { written: 1, draft_id: rec.id, body: cold, soft_grade };
+      const mode = draftMode(cold);
+      log("comms.draft", { dad: dad_id, id: rec.id, kind: kind ?? "none", grade: soft_grade, mode });
+      return { written: 1, draft_id: rec.id, body: cold, soft_grade, mode, say: draftSayLine(mode) };
     },
 
     // GET /vault/comms/drafts {dad_id} -> [{draft_id, body, kind, created_at}]
