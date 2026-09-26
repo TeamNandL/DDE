@@ -6,7 +6,6 @@ Use these in order. Paste each block as one message into Chip. For test 3, wait 
 
 **Paste into Chip:**
 
-
 ```text
 They cancelled my visit with the kids this Friday. I’m upset and don’t know what to do next.
 ```
@@ -32,7 +31,7 @@ My co-parent keeps changing the pickup plan at the last minute and I’m furious
 - Chip says clearly that the draft is **not sent** / **draft ≠ send**. Nothing is sent automatically.
 - The draft avoids insults, diagnosis, threats, legal conclusions, and private system language.
 
-## 3) Return message  “I did it loop
+## 3) Return message — “I did it” loop
 
 **Paste into Chip after test 2:**
 
@@ -44,9 +43,9 @@ I did it.
 
 - **If the live return loop is enabled:** one line in this shape, using the real prior Next: **“Last time: ___. How’d it go?”**
 - **If the return loop is not live yet:** no invented history; Chip gives one neutral check-in or one Next.
-- Chip treats “I did it as a claim, not verified proof, and does not show a receipt, token, URL, or internal jargon.
+- Chip treats “I did it” as a claim, not verified proof, and does not show a receipt, token, URL, or internal jargon.
 - One idea only; no second Next or menu.
 
 ## Overall tonight PASS
 
-All three paths stay dad-facing and ADHD-short: noticed + Matter to you?”, one cold draft with draft≠send, and a real Last-time loop when live (otherwise one Next).
+All three paths stay dad-facing and ADHD-short: noticed + “Matter to you?”, one cold draft with draft≠send, and a real Last-time loop when live (otherwise one Next).
