@@ -338,13 +338,36 @@ export class Vault {
     ].filter((r) => r.dad_id === dadId && r.pipe === "verified");
   }
 
-  // affidavit_support view — stub shape only (§3); populated in Phase 5.
-  // Verified documents + verified events only.
+  // affidavit_support view — verified documents + verified events shaped for
+  // the financial-disclosure sheet. Same flattened columns the SQL view in
+  // vault/001_schema.sql emits, so memory and Postgres answer identically.
   affidavitSupport(dadId) {
-    return {
-      documents: this.documents.filter((r) => r.dad_id === dadId && r.pipe === "verified"),
-      events: this.events.filter((r) => r.dad_id === dadId && r.pipe === "verified"),
-    };
+    const documents = this.documents
+      .filter((r) => r.dad_id === dadId && r.pipe === "verified")
+      .map((d) => ({
+        dad_id: d.dad_id,
+        kind: "document",
+        id: d.id,
+        detail: d.doc_type ?? null,
+        extracted: d.extracted ?? null,
+        period_start: d.period_start ?? null,
+        period_end: d.period_end ?? null,
+      }));
+    const events = this.events
+      .filter((r) => r.dad_id === dadId && r.pipe === "verified")
+      .map((e) => {
+        const day = e.occurred_at ? new Date(e.occurred_at).toISOString().slice(0, 10) : null;
+        return {
+          dad_id: e.dad_id,
+          kind: "event",
+          id: e.id,
+          detail: e.event_type ?? null,
+          extracted: null,
+          period_start: day,
+          period_end: day,
+        };
+      });
+    return [...documents, ...events];
   }
 
 

@@ -286,6 +286,15 @@ Paste-ready Chip description: [`CHIP_OPERATOR_BLURB.md`](CHIP_OPERATOR_BLURB.md)
 # or: BASE=http://127.0.0.1:8787 ./scripts/chip-deeplink-curl.sh
 ```
 
+### Not a Chip surface: `GET /vault/exhibit`
+
+The exhibit packet (verified-only, lettered A/B/C, cited) is the court-facing
+read for Reporting and attorney helpers — see
+[`README.md`](README.md#exhibit-packet-the-court-facing-output). Chip never
+speaks it: it is a filing, not an ADHD-short line, and an empty packet is the
+normal state early on. Chip's speakables stay `progress_line`, `missing_one`,
+`next_action`, `return_line`.
+
 ## Out of scope (this slice)
 
 Dad HTML redesign, OAuth/MFA, CloudAgent, spend, Nick real case data, Railway deploy.

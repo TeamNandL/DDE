@@ -252,6 +252,18 @@ export class SqlVault {
     );
   }
 
+  // affidavit_support view — verified documents + verified events, the
+  // financial-disclosure sheet. Mirrors the memory vault's flattened shape.
+  async affidavitSupport(dadId) {
+    return (
+      (await this.exec(
+        `select dad_id, kind, id, detail, extracted, period_start, period_end
+           from affidavit_support where dad_id = ${lit(dadId)}
+          order by period_start nulls last, id;`,
+      )) ?? []
+    );
+  }
+
   // Row counts per table for a dad — used by the harm-discard assertion.
   async countRows(dadId) {
     const rows = await this.exec(

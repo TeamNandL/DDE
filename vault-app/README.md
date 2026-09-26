@@ -43,6 +43,16 @@ No real case data. No secrets in git.
   shame)
 - `verified_export` is the only read surface for Reporting; it never returns
   claim rows
+- Exhibit packet: `GET /vault/exhibit` builds the court-facing filing **from
+  `verified_export`** — lettered A, B, C … in date order, each entry dated,
+  cited by `source_ref`, and described in cold structured language. A claim
+  row cannot reach it by construction (the builder reads the verified-only
+  surface, then asserts the pipe again on the way out and refuses the packet
+  rather than file one). Rows with no `source_ref` are excluded and counted,
+  never listed. No verified rows → an empty packet, not an error
+- `affidavit_support` is real, not a stub: verified documents + verified
+  events flattened identically on memory and Postgres — the narrow
+  financial-disclosure sheet
 - `month_summary` gate: `pipe='verified'` only when every `source_ref`
   resolves to a verified row, else forced to `claim`
 - Logs: IDs and event refs only — never message bodies, kid names, or amounts
@@ -67,6 +77,7 @@ test/chip-template.test.js  public-template leak guard + bind-flow proof
 scripts/chip-deeplink-curl.sh  localhost tip smoke (entry + Bearer)
 Dockerfile          production image: `node src/server.js --http` on 0.0.0.0:$PORT
 HOSTING.md          Fly.io / Render free-tier deploy (DATABASE_URL is a secret)
+src/exhibit.js      exhibit packet (verified-only, lettered/dated/cited) + affidavit_support rows
 src/export.js       CSV/XLSX views from vault data (not a store)
 src/cli-export.js   `npm run export:events` / `state` / `verified` / `all`
 src/logger.js       hygiene logger — IDs only
@@ -75,6 +86,8 @@ src/search.js       search option parsing + memory snippet helpers
 test/search.test.js vault FTS / search tenancy+auth+pipe tests
 test/phase1.test.js     §6 tests 1–8 (in-memory)
 test/phase1.pg.test.js  §6 test 9 (rented Postgres, app write path only)
+test/exhibit.test.js    exhibit packet rails (claim never files) + affidavit_support
+test/exhibit.pg.test.js same packet over SqlVault / the SQL views
 FIXED_VENT.md       fake-family vent used as standard input
 ```
 
@@ -156,6 +169,33 @@ tip clears it.
 - Memory store fallback: **substring** match (`mode: "substring"`) — not Postgres FTS. Documented; no 501.
 - Logs: ids/counts/`q_len` only — never full `raw_quote`.
 
+## Exhibit packet (the court-facing output)
+
+`GET /vault/exhibit?dad_id=` — same Bearer / `X-DDE-Token` gate as state/export.
+
+```json
+{ "dad_id": "…", "generated_at": "2026-09-26T…Z", "count": 1,
+  "exhibits": [ { "label": "A", "kind": "communication", "dated": "2026-09-14",
+                  "description": "OFW record pulled on 2026-09-14 — …",
+                  "source_ref": "ofw:export:2026-09-14",
+                  "id": "…", "pipe": "verified" } ],
+  "excluded": { "no_source_ref": 0 } }
+```
+
+- **Verified only.** Built from `verified_export`. A claim row in the list is
+  the one failure this packet cannot ship with, so the builder re-asserts the
+  pipe on every entry and throws rather than emit a filing.
+- **Cited or excluded.** No `source_ref` → not an exhibit; the count of
+  excluded rows is reported, never hidden. The citation is PII-stripped like
+  everything else, and each exhibit also carries the vault row `id`, which is
+  what resolves it back to the record.
+- **Cold descriptions.** Deterministic templates over structured fields. The
+  dad's `raw_quote` is never read — claim language never enters a filing.
+- **Letters are gapless**, assigned after a chronological sort: A, B, … Z, AA.
+- `npm run export:exhibit` writes `exhibit_packet.csv` plus a workbook with
+  `exhibits`, `financial_disclosure` (the `affidavit_support` view) and the
+  usual `_generated` provenance sheet.
+
 ## Optional HTTP BFF
 
 Off unless you start it. Product bots call these Phase 1 routes:
@@ -176,6 +216,7 @@ Off unless you start it. Product bots call these Phase 1 routes:
 | `POST` | `/vault/comms/cold` | `{ dad_id, body_cold, channel }` → `{ id }` |
 | `POST` | `/vault/comms/pull` | `{ dad_id, channel, source_ref, body_cold?, sent_at? }` → `{ id }` |
 | `GET` | `/vault/export/verified` | `?dad_id=` → verified rows only |
+| `GET` | `/vault/exhibit` | `?dad_id=` → `{ dad_id, generated_at, count, exhibits[], excluded }` — verified only, lettered A, B, C …; empty vault → `count: 0` |
 
 ```
 npm run serve -- --http
@@ -189,7 +230,9 @@ gate after provision; Chip entry is same-origin HTML (**hash-only** `#dad_id=&to
 
 `GET /health` returns `{ "ok": true }` and does not touch the vault.
 
-There is **no** HTTP route that returns claim rows to Reporting.
+There is **no** HTTP route that returns claim rows to Reporting. `/vault/exhibit`
+reads `verified_export`, so the court-facing packet is not a second privileged
+path into the vault.
 
 ## Spreadsheet views (from the vault)
 
@@ -201,7 +244,8 @@ as the record.
 | `npm run export:events` | events time-log |
 | `npm run export:state` | state / missing checklist |
 | `npm run export:verified` | `verified_export` (Reporting) |
-| `npm run export:all` | all three, CSV + XLSX |
+| `npm run export:exhibit` | exhibit packet + `financial_disclosure` sheet |
+| `npm run export:all` | all four, CSV + XLSX |
 
 ```
 npm run export:all -- --demo

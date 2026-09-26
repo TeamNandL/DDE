@@ -7,10 +7,13 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import ExcelJS from "exceljs";
 
+import { affidavitSupportRows, buildExhibitPacket, verifiedInnerRow } from "./exhibit.js";
+
 export const VIEW_EVENTS = "events";
 export const VIEW_STATE = "state";
 export const VIEW_VERIFIED = "verified";
-export const ALL_VIEWS = [VIEW_EVENTS, VIEW_STATE, VIEW_VERIFIED];
+export const VIEW_EXHIBIT = "exhibit";
+export const ALL_VIEWS = [VIEW_EVENTS, VIEW_STATE, VIEW_VERIFIED, VIEW_EXHIBIT];
 
 export const EVENTS_HEADERS = [
   "id",
@@ -54,6 +57,28 @@ export const VERIFIED_HEADERS = [
   "doc_type",
   "month",
   "summary_text",
+];
+
+// Exhibit packet — the court-facing sheet. Lettered, dated, cited.
+export const EXHIBIT_HEADERS = [
+  "label",
+  "kind",
+  "dated",
+  "description",
+  "source_ref",
+  "id",
+  "pipe",
+];
+
+// affidavit_support — the narrow financial-disclosure sheet.
+export const DISCLOSURE_HEADERS = [
+  "kind",
+  "detail",
+  "period_start",
+  "period_end",
+  "extracted",
+  "id",
+  "dad_id",
 ];
 
 function iso(v) {
@@ -168,7 +193,7 @@ export async function stateMissingChecklist(vault, dadId) {
 }
 
 function flattenVerified(row) {
-  const inner = row.row && typeof row.row === "object" && !Array.isArray(row.row) ? row.row : row;
+  const inner = verifiedInnerRow(row);
   return {
     source_table: row.source_table ?? inner.source_table ?? "",
     id: row.id,
@@ -193,6 +218,23 @@ export async function verifiedExportView(vault, dadId) {
   return rows.map(flattenVerified);
 }
 
+export async function exhibitPacketView(vault, dadId) {
+  const packet = await buildExhibitPacket(vault, dadId);
+  return packet.exhibits.map((e) => ({
+    label: e.label,
+    kind: e.kind,
+    dated: e.dated,
+    description: e.description,
+    source_ref: e.source_ref,
+    id: e.id,
+    pipe: e.pipe,
+  }));
+}
+
+export async function disclosureSheetRows(vault, dadId) {
+  return affidavitSupportRows(vault, dadId);
+}
+
 const VIEW_BUILDERS = {
   [VIEW_EVENTS]: {
     file: "events_time_log",
@@ -212,6 +254,21 @@ const VIEW_BUILDERS = {
     headers: VERIFIED_HEADERS,
     build: verifiedExportView,
   },
+  [VIEW_EXHIBIT]: {
+    file: "exhibit_packet",
+    sheet: "exhibits",
+    headers: EXHIBIT_HEADERS,
+    build: exhibitPacketView,
+    // The workbook carries the disclosure sheet beside the exhibit list; the
+    // CSV stays one table (the exhibit list), as every other view's does.
+    extraSheets: async (vault, dadId) => [
+      {
+        name: "financial_disclosure",
+        headers: DISCLOSURE_HEADERS,
+        rows: await disclosureSheetRows(vault, dadId),
+      },
+    ],
+  },
 };
 
 export async function buildView(vault, dadId, view) {
@@ -230,7 +287,8 @@ export async function writeExports({ vault, dadId, outDir, views = ALL_VIEWS, st
     const csvPath = resolve(dir, `${spec.file}.csv`);
     const xlsxPath = resolve(dir, `${spec.file}.xlsx`);
     writeFileSync(csvPath, toCsv(spec.headers, spec.rows), "utf8");
-    const buf = await toXlsx([{ name: spec.sheet, headers: spec.headers, rows: spec.rows }], {
+    const extra = spec.extraSheets ? await spec.extraSheets(vault, dadId) : [];
+    const buf = await toXlsx([{ name: spec.sheet, headers: spec.headers, rows: spec.rows }, ...extra], {
       view: spec.file,
       dad_id: dadId,
       store,

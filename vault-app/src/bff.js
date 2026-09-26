@@ -18,6 +18,7 @@ import { log } from "./logger.js";
 import { stripPii } from "./pii.js";
 import { clampProgressPatch, progressChipLine, progressLine, softGrade } from "./progress.js";
 import { createMemoryTokenStore, hashToken } from "./tokens.js";
+import { buildExhibitPacket } from "./exhibit.js";
 import { parseSearchOpts } from "./search.js";
 
 function unknownDad() {
@@ -523,6 +524,15 @@ export function makeBff(vault, opts = {}) {
       const rows = await vault.verifiedExport(dad_id);
       log("export.verified", { dad: dad_id, rows: rows.length });
       return rows;
+    },
+
+    // GET /vault/exhibit {dad_id} -> lettered, dated, cited exhibit packet.
+    // Built from verified_export, so claim rows cannot appear — this is the
+    // court-facing read, not a second privileged path into the vault.
+    // No verified rows yet → { count: 0, exhibits: [] }; never an error.
+    async getVaultExhibit({ dad_id }) {
+      await requireDad(dad_id);
+      return buildExhibitPacket(vault, dad_id);
     },
   };
 }

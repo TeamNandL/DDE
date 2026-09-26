@@ -4,6 +4,7 @@
 //   npm run export:events
 //   npm run export:state
 //   npm run export:verified
+//   npm run export:exhibit
 //   npm run export:all
 //
 // With DATABASE_URL: reads rented Postgres for --dad-id.
@@ -14,7 +15,15 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { makeBff } from "./bff.js";
 import { databaseUrl, openStore } from "./store.js";
-import { ALL_VIEWS, VIEW_EVENTS, VIEW_STATE, VIEW_VERIFIED, defaultExportDir, writeExports } from "./export.js";
+import {
+  ALL_VIEWS,
+  VIEW_EVENTS,
+  VIEW_EXHIBIT,
+  VIEW_STATE,
+  VIEW_VERIFIED,
+  defaultExportDir,
+  writeExports,
+} from "./export.js";
 import { DEMO_DAD_ID, seedDemo } from "./demo.js";
 
 const VIEW_ALIASES = {
@@ -26,11 +35,15 @@ const VIEW_ALIASES = {
   checklist: VIEW_STATE,
   verified: VIEW_VERIFIED,
   export: VIEW_VERIFIED,
+  exhibit: VIEW_EXHIBIT,
+  exhibits: VIEW_EXHIBIT,
+  packet: VIEW_EXHIBIT,
+  affidavit: VIEW_EXHIBIT,
   all: "all",
 };
 
 function usage() {
-  return `Usage: node src/cli-export.js <events|state|verified|all> [options]
+  return `Usage: node src/cli-export.js <events|state|verified|exhibit|all> [options]
 
 Options:
   --demo              Seed the fake-family demo (Alex Rivera) in memory
@@ -42,8 +55,12 @@ Options:
 Views are generated outputs. The vault is the source of truth — do not
 commit spreadsheets or treat them as the record.
 
+The exhibit packet is verified-only and court-facing: lettered A, B, C …,
+each entry dated and cited. Claim rows never appear in it.
+
 Examples:
   npm run export:all -- --demo
+  npm run export:exhibit -- --demo
   DATABASE_URL=... npm run export:events -- --dad-id <uuid>
 `;
 }
