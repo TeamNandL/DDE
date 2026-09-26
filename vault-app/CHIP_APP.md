@@ -76,6 +76,19 @@ Content-Type: application/json
 
 Then re-`GET /vault/state` — chase items land in `missing`; `next_action` is the One Next.
 
+**Notice path (Chip sends `make_notice: true`):**
+
+```
+→ 200 { "written": 1, "chase": [], "noticed_text": "<record copy>", "event_id": "<uuid>",
+        "say": "They cancelled your Friday visit. Matter to you?" }
+```
+
+`say` is present only for a cancelled/denied visit: one plain noticed
+sentence + "Matter to you?" — no date, no claim jargon, no Next. Chip says
+it **verbatim and stops** that turn (no Next, no OFW, no login hop); the
+Next comes only after the dad answers. `noticed_text` is the record copy —
+never read aloud. Without `make_notice` the response stays `{written, chase}`.
+
 ### 4) Return loop (dad comes back)
 
 ```
