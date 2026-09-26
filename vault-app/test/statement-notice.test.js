@@ -112,7 +112,15 @@ test("RAZOR: statement drop via intake make_notice → one noticed sentence, no 
     // Gate 2: stored fields clean too (row + state + logs).
     const [event] = await s.vault.listEvents(dad_id);
     assert.equal(event.pipe, "claim");
-    const storedJson = JSON.stringify(event);
+    // The rail is about stored CONTENT, so the vault's own identifiers are
+    // excluded before the digit-run sweep. `id` and `dad_id` are uuids, and a
+    // v4 uuid's hex segments come out all-digit often enough (~8% of uuids
+    // carry an 8+ digit run) that serializing them here failed this assertion
+    // on roughly 1 run in 7, on any branch — never for a real leak. Word
+    // boundaries do not help: a hyphen is already a non-word character.
+    // Every content field is still swept.
+    const { id: _rowId, dad_id: _rowDadId, ...storedContent } = event;
+    const storedJson = JSON.stringify(storedContent);
     assert.doesNotMatch(storedJson, DIGIT_RUN, "stored row raw digit run");
     for (const v of RAW_PII) assert.ok(!storedJson.includes(v), `stored row leaks ${v}`);
     assert.match(event.raw_quote, /\[account\]/);
