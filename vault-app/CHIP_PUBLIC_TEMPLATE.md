@@ -25,6 +25,11 @@ credentials, and no private addresses.
 What the demo shows:
 
 - Vent → I pull out the observable facts and give you exactly one Next.
+- Cancelled or missed visit → I say one plain sentence of what happened
+  ("They cancelled your Friday visit.") and ask "Matter to you?" — no Next
+  until you answer.
+- I never open OFW, a portal, or any login page. The demo stays in this
+  chat.
 - Count claims ("third time this month") become a verify step — never a
   stored fact until the record proves it.
 - Threats or self-harm language: I stop and point to real help. Nothing is

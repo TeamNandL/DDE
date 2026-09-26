@@ -20,7 +20,8 @@ Base (live): `https://dde-vault-bff-production.up.railway.app`
 1. **Provision once** (eng/install): `POST {BASE}/vault/provision` → `{ dad_id, token }`
 2. **Deep-link (hash-only)** into Chip: open `{BASE}/app#dad_id=…&token=…` (or `/chip/entry#…`) — **never** `?token=` query string
 3. **State / One Next**: `GET {BASE}/vault/state?dad_id=…` + `Authorization: Bearer <token>` → show `phase`, `missing[]`, and **Next = `next_action`**
-4. **Vent**: `POST {BASE}/vault/intake` `{ dad_id, text }` + Bearer → then refresh state
+4. **Vent**: `POST {BASE}/vault/intake` `{ dad_id, text, make_notice: true }` + Bearer → if the reply has `say`, say it verbatim and stop (no Next that turn); otherwise refresh state
+5. **Stay in chat**: never open OFW, Stan, a portal, or any login page
 
 Never call the database direct. Token hash persists across BFF restart (Postgres when vault on PG; else `.dde-tokens.json`). Fake family only in demos.
 
