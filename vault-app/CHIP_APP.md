@@ -10,6 +10,7 @@ Never Supabase / Postgres direct. Fake family in demos only.
 | Chip | front door — one pipe per message | — |
 | Quill | vent → claim; notice line (`say`: "… Matter to you?") | `POST /vault/intake` + `make_notice` |
 | Coach / Tone | vent hot → one cold draft, draft ≠ send (`say`: "Not sent. Next: …") | `POST /vault/comms/draft` |
+| Quill — talk/text fork | "Want to tell me? Talk or text." → story → `feedback` | intake `fork` → `POST /vault/tell` |
 | Eddie | state / One Next | `GET /vault/state` |
 
 ## Two-object Chip (tenant bind)
@@ -91,6 +92,25 @@ Then re-`GET /vault/state` — chase items land in `missing`; `next_action` is t
 → 200 { "written": 1, "chase": [], "noticed_text": "<record copy>", "event_id": "<uuid>",
         "say": "They cancelled your Friday visit. Matter to you?" }
 ```
+
+**Talk/text fork (every Chip intake):** the `make_notice` reply also carries
+`"fork": "Want to tell me? Talk or text."` (absent only when harm was heard).
+Chip says it as the next beat — after the dad answers `say`, or at once when
+there is no `say`. The dad's pick goes to:
+
+```
+POST /vault/tell
+{ "dad_id": "<uuid>", "channel": "talk" | "text", "story": "<his words>" }
+→ 200 { "written": 1, "channel": "talk", "feedback": "I heard you. It's kept as your account — not proof yet. Next: …" }
+→ 200 { "written": 0, "channel": …, "feedback": null }   // harm heard: nothing kept, real help only
+→ 400 bad channel / empty story
+```
+
+One claim event ('other', notes "Told by talk" / "Told by text"), harm →
+PII → venom rails first, never verified. `feedback` is the same for talk
+and text: ack + claim ≠ verified in plain words + exactly one Next
+(`next_action`, spoken as words — never an OFW hop). Chip says it verbatim
+and stops.
 
 `say` is present only for a cancelled/denied visit: one plain noticed
 sentence + "Matter to you?" — no date, no claim jargon, no Next. Chip says

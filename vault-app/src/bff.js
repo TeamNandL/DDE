@@ -114,6 +114,20 @@ export function noticeSayLine(text, eventType) {
   return `${said} Matter to you?`;
 }
 
+// Talk/text fork (Slice 4, locked): every intake offers ONE short fork —
+// the dad picks talk or text — and either way he gets the same feedback:
+// an ack, claim ≠ verified in plain words, and exactly one Next. Talk is
+// the dad speaking to Chip (Chip hands the vault the words); text is
+// typed. Same pipe, same rails, same outcome.
+export const FORK_LINE = "Want to tell me? Talk or text.";
+export const TELL_CHANNELS = ["talk", "text"];
+
+export function tellFeedback(nextAction) {
+  const next = nextAction ? stripPii(String(nextAction)).text.trim() : "";
+  const nextPart = next ? `Next: ${next.replace(/[.!?]+$/, "")}.` : "Next: tell me when something new happens.";
+  return `I heard you. It's kept as your account — not proof yet. ${nextPart}`;
+}
+
 /**
  * @param {object} vault
  * @param {{ tokenStore?: object }} [opts]
@@ -179,6 +193,9 @@ export function makeBff(vault, opts = {}) {
         const say = noticeSayLine(text, event_types[0]);
         if (say) out.say = say;
       }
+      // Fork on every Chip intake (make_notice) — never on harm, where the
+      // only job is real help.
+      if (make_notice === true && !harmCheck(text)) out.fork = FORK_LINE;
       return out;
     },
 
@@ -232,6 +249,38 @@ export function makeBff(vault, opts = {}) {
         answered: Boolean(typeof answer === "string" && answer.trim()),
       });
       return out;
+    },
+
+    // POST /vault/tell {dad_id, channel: "talk"|"text", story}
+    //   -> {written: 0|1, channel, feedback}
+    // The dad's answer to the fork. Rides the intake rails — harm first
+    // (heard → discarded, written:0, feedback null: Chip points to real
+    // help), then PII strip, then venom strip — and becomes exactly ONE
+    // claim event ('other', notes record the channel). Never verified.
+    // Feedback is identical for talk and text.
+    async postVaultTell({ dad_id, channel, story }, opts = {}) {
+      const state = await requireDad(dad_id);
+      if (!TELL_CHANNELS.includes(channel)) {
+        const err = new Error("channel must be talk or text");
+        err.status = 400;
+        throw err;
+      }
+      if (harmCheck(story)) {
+        return { written: 0, channel, feedback: null };
+      }
+      const cold = stripVenom(stripPii(story).text).trim();
+      const rec = await vault.insertEvent(dad_id, {
+        event_type: "other",
+        occurred_at: opts.referenceDate
+          ? new Date(opts.referenceDate).toISOString()
+          : new Date().toISOString(),
+        pipe: "claim",
+        raw_quote: cold || null,
+        notes: channel === "talk" ? "Told by talk" : "Told by text",
+        kids: [],
+      });
+      log("tell", { dad: dad_id, event: rec.id, channel });
+      return { written: 1, channel, feedback: tellFeedback(state.next_action) };
     },
 
     // GET /vault/chip_entry {dad_id}

@@ -28,6 +28,8 @@ What the demo shows:
 - Cancelled or missed visit → I say one plain sentence of what happened
   ("They cancelled your Friday visit.") and ask "Matter to you?" — no Next
   until you answer.
+- After you vent I ask "Want to tell me? Talk or text." — pick either;
+  you get the same short feedback and one Next.
 - "Help me say something calm" → I write one calm, factual draft you
   could send, then tell you it is **not sent** and give one Next. I never
   send anything; you do, if you choose.

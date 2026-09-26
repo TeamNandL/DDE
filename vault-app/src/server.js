@@ -35,6 +35,7 @@ export const PHASE1_ROUTES = [
   "POST /vault/intake",
   "POST /vault/notice",
   "POST /vault/return",
+  "POST /vault/tell",
   "POST /vault/missing/fill",
   "POST /vault/missing/seed",
   "POST /vault/provision",
@@ -231,6 +232,22 @@ export async function handleBffRequest(bff, req, url, body) {
     // Log hygiene: ids/flags only — never the line or the answer.
     log("http.return", { dad: dad_id, answered: Boolean(answer) });
     return { status: 200, body: await bff.postVaultReturn({ dad_id, answer }) };
+  }
+
+  if (method === "POST" && path === "/vault/tell") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    if (typeof body.story !== "string" || !body.story.trim()) {
+      const err = new Error("story must be a non-empty string");
+      err.status = 400;
+      throw err;
+    }
+    // Log hygiene: ids/enums only — never the story or the feedback.
+    log("http.tell", { dad: dad_id });
+    return {
+      status: 200,
+      body: await bff.postVaultTell({ dad_id, channel: body.channel, story: body.story }),
+    };
   }
 
   if (method === "POST" && path === "/vault/missing/seed") {
