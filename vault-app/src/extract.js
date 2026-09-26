@@ -462,5 +462,10 @@ export async function extract(vault, dadId, text, opts = {}) {
 
   // event_ids is internal (BFF notice hook) — the HTTP intake response
   // stays { written, chase } unless make_notice is set.
-  return { written: rows.length, chase, event_ids: rows.map((r) => r.id) };
+  return {
+    written: rows.length,
+    chase,
+    event_ids: rows.map((r) => r.id),
+    event_types: rows.map((r) => r.event_type),
+  };
 }

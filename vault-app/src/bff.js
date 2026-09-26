@@ -73,6 +73,24 @@ export function coldAskLine(summary) {
   return stripPii(`Last time: cold ask — ${summary.trim()}. How'd it go?`).text;
 }
 
+// Notice path (walk paste 1): the dad-facing line Chip speaks after a
+// cancelled/denied-visit vent — one plain noticed sentence, then "Matter to
+// you?". No date, no claim/verification jargon (that stays in
+// noticed_text, the record-facing string), no Next. Weekday only when the
+// dad said one. Null for every other event type — nothing invented.
+const WEEKDAY_RE = /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i;
+
+export function noticeSayLine(text, eventType) {
+  if (eventType !== "denied_visit") return null;
+  const lower = String(text ?? "").toLowerCase();
+  const day = lower.match(WEEKDAY_RE)?.[1];
+  const visit = day ? `your ${day[0].toUpperCase()}${day.slice(1)} visit` : "your visit";
+  const said = /\b(cancel\w*|called off)\b/.test(lower)
+    ? `They cancelled ${visit}.`
+    : `${visit[0].toUpperCase()}${visit.slice(1)} didn't happen.`;
+  return `${said} Matter to you?`;
+}
+
 /**
  * @param {object} vault
  * @param {{ tokenStore?: object }} [opts]
@@ -124,7 +142,7 @@ export function makeBff(vault, opts = {}) {
     // {noticed_text, event_id}; the plain response shape is unchanged.
     async postVaultIntake({ dad_id, text, make_notice, source }, opts = {}) {
       await requireDad(dad_id);
-      const { written, chase, event_ids = [] } = await extract(vault, dad_id, text, {
+      const { written, chase, event_ids = [], event_types = [] } = await extract(vault, dad_id, text, {
         ...opts,
         source: source ?? opts.source,
       });
@@ -133,6 +151,10 @@ export function makeBff(vault, opts = {}) {
         const noticed = await vault.noticeEvent(dad_id, event_ids[0]);
         out.noticed_text = noticed.noticed_text;
         out.event_id = noticed.event_id;
+        // Dad-facing line (denied/cancelled visit only). Chip says `say`
+        // verbatim and stops — never noticed_text, never a Next this turn.
+        const say = noticeSayLine(text, event_types[0]);
+        if (say) out.say = say;
       }
       return out;
     },
