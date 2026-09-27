@@ -330,3 +330,10 @@ Paste-ready Chip description: [`CHIP_OPERATOR_BLURB.md`](CHIP_OPERATOR_BLURB.md)
 ## Out of scope (this slice)
 
 Dad HTML redesign, OAuth/MFA, CloudAgent, spend, Nick real case data, Railway deploy.
+
+## Standing principles (court-prep / Chip conversation)
+
+Non-negotiable source rules for over-capture, keyword candidates, OFW
+cross-check, structured account facts, and proactive check-ins live in
+[`COURT_PREP_PRINCIPLES.md`](COURT_PREP_PRINCIPLES.md). Obey them; do not
+weaken in code or copy without Nick exact-yes.
