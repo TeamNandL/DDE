@@ -213,7 +213,7 @@ test("harm answer: heard → discarded — zero rows, nothing shifted, nothing b
   }
 });
 
-test("gates and validation: 400 empty answer; 404 unknown dad; 401 no token; 403 cross-dad", async () => {
+test("gates and validation: 400 empty answer; 401 unknown dad (F1); 401 no token; 403 cross-dad", async () => {
   const s = await start();
   try {
     const a = await provisionedDad(s.base);
@@ -239,7 +239,7 @@ test("gates and validation: 400 empty answer; 404 unknown dad; 401 no token; 403
       dad_id: randomUUID(),
       answer: "x",
     });
-    assert.equal(unknown.status, 404);
+    assert.equal(unknown.status, 401);
 
     const noTok = await jsonReq(s.base, "POST", "/vault/missing/fill", {
       dad_id: a.dad_id,

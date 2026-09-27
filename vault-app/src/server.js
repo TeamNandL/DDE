@@ -18,6 +18,7 @@ import { parseArgs } from "node:util";
 import { makeBff } from "./bff.js";
 import { databaseUrl, openStore } from "./store.js";
 import { defaultJsonPath, openTokenStore } from "./tokens.js";
+import { defaultOpsPath, openOpsStore } from "./opsstore.js";
 import { DEMO_DAD_ID, seedDemo } from "./demo.js";
 import { log } from "./logger.js";
 import { bindDad, runRequestScope } from "./scope.js";
@@ -73,6 +74,7 @@ export const PHASE1_ROUTES = [
   "POST /vault/comms/pull",
   "GET /vault/export/verified",
   "GET /vault/exhibit",
+  "GET /vault/export",
   "GET /vault/search",
   "POST /vault/logout",
   "POST /vault/panic",
@@ -87,11 +89,12 @@ function json(res, status, body) {
   res.end(payload);
 }
 
-function send(res, status, body, contentType = "application/json; charset=utf-8") {
-  const payload = typeof body === "string" ? body : JSON.stringify(body);
+function send(res, status, body, contentType = "application/json; charset=utf-8", headers = {}) {
+  const payload = typeof body === "string" || Buffer.isBuffer(body) ? body : JSON.stringify(body);
   res.writeHead(status, {
     "content-type": contentType,
     "content-length": Buffer.byteLength(payload),
+    ...headers,
   });
   res.end(payload);
 }
@@ -157,19 +160,15 @@ export function extractToken(req) {
 
 /**
  * Tenancy + auth for every dad-scoped route except provision.
- * Order: dad exists → 404 unknown dad; then token → 401/403.
- * (Unprovisioned curls without a token must still get 404, not 401.)
+ * Bearer gate first, always. A dad that does not exist — wiped (Slice 21)
+ * or never provisioned — answers exactly like a revoked token: 401
+ * {"error":"unauthorized"}. Nothing distinguishes the two (Nick F1 ruling).
  */
-// Auth matrix (Slice 18): unknown dad → 404 · no / bad token → 401 ·
-// token for another dad → 403 · own token → the route runs, and every SQL
-// statement after this point runs as dde_app bound to this dad (RLS).
+// Auth matrix (Slice 18, amended Slice 21): no / bad / revoked / expired
+// token → 401 · unknown dad → 401 (same body) · token for another existing
+// dad → 403 · own token → the route runs, and every SQL statement after
+// this point runs as dde_app bound to this dad (RLS).
 async function gateDad(bff, req, dad_id) {
-  const state = await bff.getVaultState({ dad_id });
-  if (!state) {
-    const err = new Error("unknown dad");
-    err.status = 404;
-    throw err;
-  }
   await bff.checkToken(dad_id, extractToken(req));
   bindDad(dad_id);
 }
@@ -343,9 +342,8 @@ export async function handleBffRequest(bff, req, url, body) {
   if (method === "GET" && path === "/vault/state") {
     // Read-only: never insert/upsert/create on GET.
     const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
-    await gateDad(bff, req, dad_id);
+    await gateDad(bff, req, dad_id); // gate already proved the dad exists (else 401)
     const state = await bff.getVaultState({ dad_id });
-    if (!state) return { status: 404, body: { error: "unknown dad" } };
     log("http.state.get", { dad: dad_id });
     return { status: 200, body: state };
   }
@@ -630,6 +628,21 @@ export async function handleBffRequest(bff, req, url, body) {
     return { status: 200, body: await bff.postCommsPull(body) };
   }
 
+  // Slice 21 — the dad's full bundle (zip). Same gate. Records a receipt.
+  // There is NO delete route: delete is Nick-only (src/cli-dad.js).
+  if (method === "GET" && path === "/vault/export") {
+    const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
+    await gateDad(bff, req, dad_id);
+    const out = await bff.getVaultExportZip({ dad_id });
+    log("http.export", { dad: dad_id, bytes: out.bytes });
+    return {
+      status: 200,
+      body: out.zip,
+      contentType: "application/zip",
+      headers: { "content-disposition": `attachment; filename="dde-export-${out.exported_at.slice(0, 10)}.zip"` },
+    };
+  }
+
   if (method === "GET" && path === "/vault/export/verified") {
     const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
     await gateDad(bff, req, dad_id);
@@ -679,7 +692,7 @@ export function createServer(bff) {
       }
       const result = await runRequestScope(() => handleBffRequest(bff, req, url, body));
       const ct = result.contentType || "application/json; charset=utf-8";
-      send(res, result.status, result.body, ct);
+      send(res, result.status, result.body, ct, result.headers || {});
     } catch (err) {
       const status = Number(err?.status);
       const msg = String(err?.message || "bad request");
@@ -754,7 +767,10 @@ export async function main(argv = process.argv.slice(2)) {
     : await openTokenStore({
         jsonPath: process.env.DDE_TOKENS_PATH || defaultJsonPath(),
       });
-  const bff = makeBff(store.vault, { tokenStore });
+  const opsStore = usePostgres
+    ? await openOpsStore({ query: store.query })
+    : await openOpsStore({ jsonPath: defaultOpsPath() });
+  const bff = makeBff(store.vault, { tokenStore, opsStore });
   if (values.demo) {
     await seedDemo(bff, DEMO_DAD_ID);
   }
@@ -773,6 +789,7 @@ export async function main(argv = process.argv.slice(2)) {
   const shutdown = async () => {
     server.close();
     await tokenStore.close();
+    await opsStore.close();
     await store.close();
   };
   process.on("SIGINT", () => {

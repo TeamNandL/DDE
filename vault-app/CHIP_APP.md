@@ -67,7 +67,7 @@ GET /vault/state?dad_id=<uuid>
 Authorization: Bearer <token>
 
 → 200 state row: { dad_id, phase, this_week, missing[], next_action, … }
-→ 404 { "error": "unknown dad" }
+→ 401 { "error": "unauthorized" }   // unknown dad answers exactly like a bad token (F1)
 → 401 / 403 unauthorized / forbidden
 ```
 
@@ -465,7 +465,7 @@ counsel channel. Not Coach, not Quill, not Parenting Plan (§11).
 `Authorization: Bearer <token>` (preferred) or `X-DDE-Token: <token>`.
 Zero extra auth theater — no OAuth, no login page, no MFA on this slice.
 
-Auth matrix (Slice 18, every dad-scoped route): unknown dad → `404` ·
+Auth matrix (Slice 18, amended Slice 21 F1, every dad-scoped route): unknown dad (wiped **or** never provisioned) → `401` with the same body as a bad token ·
 no or bad token → `401` · another dad's token → `403` · own token → the
 route runs. After the gate, every database statement for that request runs
 as the non-owner role `dde_app` bound to that dad, and Postgres row-level
@@ -490,7 +490,7 @@ POST /vault/panic    { "dad_id": "<uuid>" }  + Bearer      // same action, the d
 → 200 { "logged_out": true, "revoked": <n> }   // EVERY token this dad holds is dead, the caller's included
 ```
 
-Same gate as every dad route (404 / 401 / 403 above): a dead token can't
+Same gate as every dad route (401 / 403 above): a dead token can't
 log itself out — that's a `401`, not something to retry. The dad hits panic
 from `/app`: **"Log out everywhere now"** under the intake box
 (`public/chip-entry.html`, `#btn_panic`). Chip can offer the same as a
@@ -524,6 +524,34 @@ CLI. Only `token:reissue` prints a raw token, once, to the operator.
 **Cutover.** Shipping this logs nobody out: existing tokens get
 `last_seen_at = now()` at the first boot and roll onto the 30-day rule from
 there. Rollback: see `HOSTING.md` → *Rollback (Slice 20)*.
+
+### Dad export (Slice 21) — export yes, delete never from the app
+
+```
+GET /vault/export?dad_id=<uuid>   + Bearer
+→ 200 application/zip  (content-disposition: attachment; filename="dde-export-<date>.zip")
+→ 401 / 403 as every dad route (unknown dad → 401)
+```
+
+Zip layout:
+
+| File | Holds |
+| --- | --- |
+| `README.txt` | what each bucket means; "a claim is never placed in verified/" |
+| `claims/claims.json`, `claims/claims.txt` | every row with `pipe = 'claim'` **plus** every bot-owned working record (state, candidates, check-ins, plan topics/drafts, translations, involvement, legal intake/handoff drafts). Not proof. |
+| `verified/verified.json`, `verified/verified.txt` | **only** `pipe = 'verified'` rows from events / communications / documents / month_summary — the same set `verified_export` serves |
+
+Every string is PII-stripped (`src/pii.js`: no SSN/EIN, account, phone,
+street address) and any `dde-stub-` token is masked to its last 4. His own
+`dad_id` and row ids stay intact so he can cite a row. The server records
+an **export receipt** (id, dad_id, time, sha256, bytes, actor) in the
+owner-only ledger on every success — that receipt is what later unlocks a
+delete. Chip can offer "Want a copy of everything?" and call this route.
+
+**There is no delete in the app. None.** No route, no button, no confirm
+screen. Delete protects the dad from himself: a 2 a.m. rage-delete must be
+impossible from here. Delete is Nick-only, from the CLI, and only after an
+export receipt exists — see `HOSTING.md` → *Dad export + delete (Slice 21)*.
 
 ## Chip deep-link entry (minimal HTML)
 

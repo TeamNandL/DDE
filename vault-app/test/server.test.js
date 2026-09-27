@@ -190,13 +190,13 @@ test("HTTP BFF rejects missing dad_id and unknown routes", async () => {
   }
 });
 
-test("HTTP BFF: GET unknown dad → 404; POST provision → 200; GET that dad → 200", async () => {
+test("HTTP BFF: GET unknown dad → 401 same as a bad token (F1); POST provision → 200; GET that dad → 200", async () => {
   const s = await start();
   const unknown = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
   try {
     const miss = await jsonReq(s.base, "GET", `/vault/state?dad_id=${unknown}`);
-    assert.equal(miss.status, 404);
-    assert.deepEqual(miss.data, { error: "unknown dad" });
+    assert.equal(miss.status, 401);
+    assert.deepEqual(miss.data, { error: "unauthorized" });
 
     const prov = await jsonReq(s.base, "POST", "/vault/provision", {
       dad_id: unknown,
@@ -236,7 +236,7 @@ test("HTTP BFF: GET unknown dad → 404; POST provision → 200; GET that dad �
   }
 });
 
-test("BLOCKER: intake/PUT without provision → 404 unknown dad (no silent upsert)", async () => {
+test("BLOCKER: intake/PUT without provision → 401 (F1; no silent upsert)", async () => {
   const s = await start();
   const dad_id = randomUUID();
   try {
@@ -244,8 +244,8 @@ test("BLOCKER: intake/PUT without provision → 404 unknown dad (no silent upser
       dad_id,
       text: "Jordan was late to the exchange at 6:45.",
     });
-    assert.equal(intake.status, 404);
-    assert.deepEqual(intake.data, { error: "unknown dad" });
+    assert.equal(intake.status, 401);
+    assert.deepEqual(intake.data, { error: "unauthorized" });
     assert.equal(s.vault.getState(dad_id), null);
     assert.equal(s.vault.events.length, 0);
 
@@ -253,8 +253,8 @@ test("BLOCKER: intake/PUT without provision → 404 unknown dad (no silent upser
       dad_id,
       this_week: "should not create",
     });
-    assert.equal(put.status, 404);
-    assert.deepEqual(put.data, { error: "unknown dad" });
+    assert.equal(put.status, 401);
+    assert.deepEqual(put.data, { error: "unauthorized" });
     assert.equal(s.vault.getState(dad_id), null);
   } finally {
     await s.close();

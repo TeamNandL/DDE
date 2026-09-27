@@ -659,6 +659,47 @@ export class Vault {
 
   // verified_export view — union of all tables where pipe='verified'.
   // The ONLY thing Reporting or any attorney helper may read.
+  // ---- Slice 21: export + delete (owner / operator paths only) ----------
+
+  /** Every row this dad owns, per table. Raw — the export builder sanitizes. */
+  exportAll(dadId) {
+    const pick = (arr) => arr.filter((r) => r.dad_id === dadId).map((r) => ({ ...r }));
+    const st = this.state.get(dadId);
+    return {
+      events: pick(this.events),
+      communications: pick(this.communications),
+      documents: pick(this.documents),
+      month_summary: pick(this.month_summary),
+      state: st ? [{ ...st }] : [],
+      candidate_facts: pick(this.candidate_facts),
+      notifications: pick(this.notifications),
+      plan_topics: pick(this.plan_topics),
+      plan_drafts: pick(this.plan_drafts),
+      translations: pick(this.translations),
+      translator_calendar_candidates: pick(this.translator_calendar_candidates),
+      involvement_fields: pick(this.involvement_fields),
+      legal_intakes: pick(this.legal_intakes),
+      legal_handoff_drafts: pick(this.legal_handoff_drafts),
+    };
+  }
+
+  /** HARD wipe: every row for this dad, every table. Returns counts removed. */
+  wipeDad(dadId) {
+    const counts = {};
+    for (const t of [
+      "events", "communications", "documents", "month_summary", "candidate_facts",
+      "notifications", "plan_topics", "plan_drafts", "translations",
+      "translator_calendar_candidates", "involvement_fields", "legal_intakes",
+      "legal_handoff_drafts",
+    ]) {
+      const before = this[t].length;
+      this[t] = this[t].filter((r) => r.dad_id !== dadId);
+      counts[t] = before - this[t].length;
+    }
+    counts.state = this.state.delete(dadId) ? 1 : 0;
+    return counts;
+  }
+
   verifiedExport(dadId) {
     const tag = (source_table) => (r) => ({ source_table, ...r });
     return [

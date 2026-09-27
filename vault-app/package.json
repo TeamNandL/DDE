@@ -18,7 +18,11 @@
     "token:revoke": "node src/cli-token.js revoke",
     "token:reissue": "node src/cli-token.js reissue",
     "token:sweep": "node src/cli-token.js sweep",
-    "token:revoke-all": "node src/cli-token.js revoke-all"
+    "token:revoke-all": "node src/cli-token.js revoke-all",
+    "dad:export": "node src/cli-dad.js export",
+    "dad:delete": "node src/cli-dad.js delete",
+    "dad:cancel-delete": "node src/cli-dad.js cancel-delete",
+    "dad:purge": "node src/cli-dad.js purge"
   },
   "dependencies": {
     "exceljs": "^4.4.0",

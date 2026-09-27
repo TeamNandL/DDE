@@ -11,7 +11,7 @@ Minimal token gate: `POST /vault/provision` returns `{dad_id, token}`. Mutating 
 | Path | Needs DB? | Notes |
 | --- | --- | --- |
 | `GET /health` | No | `{ "ok": true }` — use this for Fly/Render checks |
-| `GET /vault/state?dad_id=<uuid>` | Yes | Requires Bearer/`X-DDE-Token`. 200 when provisioned; **404** `{"error":"unknown dad"}` otherwise (read-only — no create) |
+| `GET /vault/state?dad_id=<uuid>` | Yes | Requires Bearer/`X-DDE-Token`. 200 when provisioned; **401** `{"error":"unauthorized"}` otherwise — identical to a bad token, so an unknown dad never reads differently (F1). Read-only — no create |
 | `POST /vault/provision` | Yes | **Only** create path. Inserts `state` (`phase=intake`, `missing=[]`, `next_action=null`). Returns `{dad_id, token}` (`dde-stub-<uuid>`). Stores **token_hash** only (durable) |
 
 ## Build locally
@@ -145,3 +145,66 @@ no row comes back.
     curl -s -o /dev/null -w '%{http_code}\n' "$B/vault/state?dad_id=$D" -H "Authorization: Bearer $T"     # 401 — old token rejected
 
 Then `npm run token:revoke -- --dad-id $D` to retire the fake dad's row.
+
+## Dad export + delete (Slice 21)
+
+Boot applies `vault/016_export_delete.sql` after 015: two **owner-only**
+ledger tables (`dde_app` gets nothing), holding ids, timestamps, a hash —
+never dad content.
+
+| Table | Row means |
+| --- | --- |
+| `dde_export_receipts` | one successful export of that dad's bundle (`actor` = `dad` via `GET /vault/export`, or `operator` via CLI) |
+| `dde_deletions` | one dad ever scheduled for deletion: `requested_at` → soft; `purge_at` = +`DDE_DELETE_GRACE_DAYS` (14); `cancelled_at`; `purged_at` + `purged_counts` (tombstone) |
+
+Optional env: `DDE_EXPORT_FRESH_DAYS` (default 7), `DDE_DELETE_GRACE_DAYS`
+(default 14), `DDE_OPS_PATH` (JSON ledger path when no `DATABASE_URL`).
+
+### Nick-only commands (no HTTP equivalent exists)
+
+    npm run dad:export        -- --dad-id <uuid> [--out file.zip]  # bundle + receipt
+    npm run dad:delete        -- --dad-id <uuid>                   # SOFT delete
+    npm run dad:cancel-delete -- --dad-id <uuid>                   # inside the 14 days
+    npm run dad:purge         [-- --dad-id <uuid>]                 # HARD wipe of every due deletion
+
+**The receipt gate is a server rail, not a warning.** `dad:delete` is
+refused (`412 export receipt required`) unless a receipt newer than
+`DDE_EXPORT_FRESH_DAYS` exists for that dad. Purge re-checks that a receipt
+exists before wiping. Nobody loses data they never got a copy of.
+
+Soft delete: every token for the dad is revoked on the spot (his link dies:
+`401`), every row stays, `dad:cancel-delete` restores access (then
+`token:reissue`). No new token can be minted for a dad inside the window.
+
+Hard wipe (`dad:purge`, run by Nick — cron it daily or run it by hand):
+deletes every row for the dad from all 14 dad tables (children before
+parents) **and drops his token rows**, then writes `purged_at` +
+`purged_counts` on the ledger row. The dad no longer exists: any old token
+replayed gets `401 {"error":"unauthorized"}` — byte-identical to the soft
+window, to a revoked token, and to a dad that never existed (Nick F1
+ruling: the Bearer gate treats "dad not found" as unauthorized; no
+tombstone lookup, nothing leaks).
+
+### Irreversible — a code rollback does NOT restore data
+
+After `dad:purge` the rows are gone from Postgres. Rolling the code back to
+af56bad (or any commit) changes nothing about that: the old code reads the
+same database, and the rows are not in it. The only copy is the export
+bundle the receipt gate made you produce first. There is no undo, no
+recycle bin, no snapshot in this app. If you need a restore path, that is a
+database-level backup (host PITR / pg_dump), outside this slice.
+
+### Rollback to af56bad (one step)
+
+`git checkout af56bad` → build → deploy, same `DATABASE_URL`. Nothing to
+migrate down: the 016 tables are owner-only and af56bad never reads them.
+
+| Ledger state at rollback | Under af56bad |
+| --- | --- |
+| Soft-deleted dad (window open) | **rows intact, tokens stay revoked** (af56bad honors `revoked_at`). He is locked out but nothing is lost. `token:reissue` from af56bad's CLI restores access; the pending deletion sits in the ledger and resumes if you roll forward and run `dad:purge` — cancel it first if that's not wanted. |
+| Purged dad | gone, as above. Tombstone stays. |
+| Export receipts | ignored by af56bad; harmless. |
+
+Proof: `DATABASE_URL=... node --test test/export-delete.test.js test/export-delete.pg.test.js`
+(PG leg asserts every row is still present during the soft window and that
+all 14 tables + token rows read zero after purge).
