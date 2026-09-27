@@ -82,6 +82,8 @@ export class Vault {
     this.translations = []; // process translator (Slice 15)
     this.translator_calendar_candidates = []; // private_only, claim ≠ verified
     this.involvement_fields = []; // involvement cheat sheet (Slice 16)
+    this.legal_intakes = []; // legal intake seat (Slice 17)
+    this.legal_handoff_drafts = []; // draft ≠ send: sent_at always null
   }
 
   insertEvent(dadId, row) {
@@ -578,6 +580,54 @@ export class Vault {
     if (!rec) return null;
     Object.assign(rec, patch, { updated_at: new Date().toISOString() });
     log("involvement.update", { table: "involvement_fields", dad: dadId, field: key });
+    return rec;
+  }
+
+  // ---- legal intake (vault/014_legal_intake.sql twin) ----------------------
+
+  insertLegalIntake(dadId, c) {
+    const rec = {
+      id: randomUUID(),
+      dad_id: dadId,
+      created_at: new Date().toISOString(),
+      who: c.who,
+      what_cold: c.what_cold,
+      urgency: c.urgency,
+      flags: [...c.flags],
+      route: c.route,
+      claim_status: "claim",
+    };
+    this.legal_intakes.push(rec);
+    log("legal.intake", { table: "legal_intakes", id: rec.id, dad: dadId, route: c.route });
+    return rec;
+  }
+
+  getLegalIntake(dadId, id) {
+    return this.legal_intakes.find((r) => r.dad_id === dadId && r.id === id) ?? null;
+  }
+
+  latestLegalIntake(dadId) {
+    const rows = this.legal_intakes.filter((r) => r.dad_id === dadId);
+    return rows[rows.length - 1] ?? null;
+  }
+
+  latestHandoffDraft(intakeId) {
+    const rows = this.legal_handoff_drafts.filter((d) => d.intake_id === intakeId);
+    return rows.sort((a, b) => b.version - a.version)[0] ?? null;
+  }
+
+  insertHandoffDraft(dadId, intakeId, version, body) {
+    const rec = {
+      id: randomUUID(),
+      intake_id: intakeId,
+      dad_id: dadId,
+      version,
+      body,
+      created_at: new Date().toISOString(),
+      sent_at: null,
+    };
+    this.legal_handoff_drafts.push(rec);
+    log("legal.handoff", { table: "legal_handoff_drafts", id: rec.id, dad: dadId, version });
     return rec;
   }
 

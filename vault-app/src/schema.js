@@ -20,6 +20,7 @@ export const COURT_PREP_SCHEMA_PATH = resolve(here, "../../vault/010_court_prep.
 export const PARENTING_PLAN_SCHEMA_PATH = resolve(here, "../../vault/011_parenting_plan.sql");
 export const PROCESS_TRANSLATOR_SCHEMA_PATH = resolve(here, "../../vault/012_process_translator.sql");
 export const INVOLVEMENT_SCHEMA_PATH = resolve(here, "../../vault/013_involvement.sql");
+export const LEGAL_INTAKE_SCHEMA_PATH = resolve(here, "../../vault/014_legal_intake.sql");
 
 export function readPhase1SchemaSql() {
   return readFileSync(SCHEMA_PATH, "utf8");
@@ -167,6 +168,15 @@ export async function applyInvolvementSchema(exec) {
   }
 }
 
+// Legal Intake seat (Slice 17): legal_intakes + legal_handoff_drafts.
+export async function applyLegalIntakeSchema(exec) {
+  const sql = readFileSync(LEGAL_INTAKE_SCHEMA_PATH, "utf8");
+  if (!sql.trim()) throw new Error("014_legal_intake.sql is empty");
+  for (const stmt of splitSqlStatements(sql)) {
+    await exec(stmt);
+  }
+}
+
 /** Phase 1 tables + FTS + noticed + return + progress + cold-ask + drafts (+grade) + court-prep. */
 export async function applyVaultSchema(exec) {
   await applyPhase1Schema(exec);
@@ -181,4 +191,5 @@ export async function applyVaultSchema(exec) {
   await applyParentingPlanSchema(exec);
   await applyProcessTranslatorSchema(exec);
   await applyInvolvementSchema(exec);
+  await applyLegalIntakeSchema(exec);
 }

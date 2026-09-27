@@ -58,6 +58,9 @@ export const PHASE1_ROUTES = [
   "POST /vault/involvement/field",
   "GET /vault/involvement/next",
   "GET /vault/involvement/export",
+  "POST /vault/legal/intake",
+  "GET /vault/legal/intake",
+  "POST /vault/legal/handoff",
   "POST /vault/candidates/review",
   "GET /vault/notifications",
   "POST /vault/checkins/ensure",
@@ -406,6 +409,31 @@ export async function handleBffRequest(bff, req, url, body) {
     await gateDad(bff, req, dad_id);
     log("http.plan.draft", { dad: dad_id });
     return { status: 200, body: await bff.getPlanDraft({ dad_id, kind: q.get("kind") || "full" }) };
+  }
+
+  // Legal Intake seat (Slice 17). Log hygiene: ids only — never the "what".
+  if (method === "POST" && path === "/vault/legal/intake") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    log("http.legal.intake", { dad: dad_id });
+    return {
+      status: 200,
+      body: await bff.postLegalIntake({ dad_id, who: body.who, what: body.what, urgency: body.urgency }),
+    };
+  }
+
+  if (method === "GET" && path === "/vault/legal/intake") {
+    const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
+    await gateDad(bff, req, dad_id);
+    log("http.legal.get", { dad: dad_id });
+    return { status: 200, body: await bff.getLegalIntake({ dad_id, id: q.get("id") || undefined }) };
+  }
+
+  if (method === "POST" && path === "/vault/legal/handoff") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    log("http.legal.handoff", { dad: dad_id });
+    return { status: 200, body: await bff.postLegalHandoff({ dad_id, id: body.id }) };
   }
 
   // Involvement Cheat Sheet (Slice 16). Log hygiene: ids only — never kid
