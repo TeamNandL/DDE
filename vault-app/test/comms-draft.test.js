@@ -3,6 +3,7 @@
 // /vault/comms/drafts lists drafts ONLY. No send endpoint exists for
 // drafts. Fake dad only.
 
+import { FAILSAFE_SAY } from "../src/calmdraft.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -142,7 +143,8 @@ test("harm body → written:0, ZERO rows; pure-venom body → written:0 too", as
       { dad_id, body: "She is spiteful and toxic." },
       { token },
     );
-    assert.deepEqual(venomOnly.data, { written: 0 });
+    // Slice 19b fail-safe: no body, nothing stored, a plain say.
+    assert.deepEqual(venomOnly.data, { written: 0, rewritten: false, say: FAILSAFE_SAY });
     assert.equal(s.vault.communications.length, 0);
   } finally {
     await s.close();
@@ -222,7 +224,7 @@ test("drafts list excludes sent/pulled comms; no send endpoint for drafts exists
 
     const list = await jsonReq(s.base, "GET", `/vault/comms/drafts?dad_id=${dad_id}`, null, { token });
     assert.equal(list.data.length, 1, "sent/pulled comms must not appear in drafts");
-    assert.equal(list.data[0].body, "Draft only.");
+    assert.equal(list.data[0].body, "Draft only. Thank you.", "Slice 19b: rewritten, never verbatim");
 
     // This slice ships no draft-send route.
     assert.ok(!PHASE1_ROUTES.some((r) => /draft.*send|send.*draft/i.test(r)));

@@ -174,7 +174,8 @@ test("latest_draft hint: omitted with no drafts; newest draft's grade + 80-char 
     const one = await jsonReq(s.base, "GET", `/vault/chip_entry?dad_id=${dad_id}`, null, { token });
     assert.deepEqual(one.data.latest_draft, {
       soft_grade: "ready",
-      preview: "Confirming Thursday pickup time.",
+      // Slice 19b: every draft is rewritten — never the input verbatim.
+      preview: "Confirming Thursday pickup time. Thank you.",
     });
 
     // Second draft is NEWER and long (> 280 clean) → tighten, 80-char preview.
@@ -214,7 +215,8 @@ test("RAZOR: chip_entry soft_grade matches the draft POST grade", async () => {
   try {
     const { dad_id, token } = await provisionedDad(s.base);
 
-    // Exact Razor case: tone flag, storable, graded tighten at POST.
+    // Slice 19b: an insult-only body ("This is stupid.") has no clean
+    // message in it → fail-safe: no draft row, so no latest_draft to grade.
     const post = await jsonReq(
       s.base,
       "POST",
@@ -222,11 +224,10 @@ test("RAZOR: chip_entry soft_grade matches the draft POST grade", async () => {
       { dad_id, body: "This is stupid." },
       { token },
     );
-    assert.equal(post.data.written, 1);
-    assert.equal(post.data.soft_grade, "tighten");
+    assert.equal(post.data.written, 0);
+    assert.ok(!("body" in post.data));
     const entry = await jsonReq(s.base, "GET", `/vault/chip_entry?dad_id=${dad_id}`, null, { token });
-    assert.equal(entry.data.latest_draft.soft_grade, "tighten", "must match the POST grade");
-    assert.equal(entry.data.latest_draft.preview, "This is stupid.");
+    assert.ok(!("latest_draft" in entry.data), "nothing stored, nothing previewed");
 
     // The mismatch class: venom stripped at write → stored body is clean
     // and would recompute "ready" — the STORED grade must still say
@@ -246,7 +247,7 @@ test("RAZOR: chip_entry soft_grade matches the draft POST grade", async () => {
 
     // Shape, GET-only, and rails all hold.
     assert.deepEqual(Object.keys(entry2.data.latest_draft).sort(), ["preview", "soft_grade"]);
-    assert.equal(s.vault.listDrafts(dad_id).length, 2, "GET wrote nothing");
+    assert.equal(s.vault.listDrafts(dad_id).length, 1, "GET wrote nothing");
     const state = await jsonReq(s.base, "GET", `/vault/state?dad_id=${dad_id}`, null, { token });
     assert.equal(state.data.last_next, null);
     const verified = await jsonReq(

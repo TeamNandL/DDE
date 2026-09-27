@@ -58,6 +58,7 @@ import {
   nextStep as legalNextStep,
   renderPacket as legalRenderPacket,
 } from "./legalintake.js";
+import { DEFEAT_SAY, FAILSAFE_SAY, SAFETY_SAY, coach } from "./calmdraft.js";
 import { LAWYER_LINE as TRANSLATOR_LAWYER_LINE, explain as translatorExplain } from "./translator.js";
 
 function unknownDad() {
@@ -1172,15 +1173,36 @@ export function makeBff(vault, opts = {}) {
         return { written: 0 };
       }
       const piiClean = stripPii(body).text;
-      const venomStripped = hasVenom(piiClean);
-      const cold = stripVenom(piiClean).trim();
-      if (!cold) {
-        // Nothing storable survived the strips (pure venom) — no row.
-        return { written: 0 };
+      // Slice 19 — heat (swearing, diagnosing the other parent, "tell her
+      // off"): never strip-and-keep (that returned hot fragments). Build a
+      // complete calm draft from the real issue + real ask, or fail safe:
+      // no body, nothing stored, a plain say — the vent is never echoed.
+      // 19b: EVERY draft goes through the calm rewrite — no heat gate. The
+      // body is never the dad's input or a slice of it. Safety reports and
+      // worn-out vents are never drafted; anything that can't become one
+      // clean, complete message fails safe (no body, nothing stored).
+      const r = coach(piiClean);
+      if (r.kind === "safety") {
+        log("comms.draft.safety", { dad: dad_id });
+        return { written: 0, rewritten: false, route: "safety", say: SAFETY_SAY, facts: r.facts };
       }
+      if (r.kind === "defeat") {
+        log("comms.draft.checkin", { dad: dad_id });
+        return { written: 0, rewritten: false, route: "check_in", say: DEFEAT_SAY };
+      }
+      if (r.kind !== "draft") {
+        log("comms.draft.failsafe", { dad: dad_id });
+        return { written: 0, rewritten: false, say: FAILSAFE_SAY };
+      }
+      const cold = r.body;
+      const onRecord = r.on_record;
+      // Template rebuilds are send-ready; the kept-sentence path grades
+      // "tighten" when heat was dropped (the dad's words changed).
+      const venomStripped = r.topic === "kept" && r.dropped;
       // Grade from the PRE-strip knowledge, persisted with the row so
       // reads return the same grade the POST did.
-      const soft_grade = draftSoftGrade(cold, venomStripped);
+      // Graded on the dad's own kept words (r.core), not the added "Thank you."
+      const soft_grade = draftSoftGrade(r.core, venomStripped);
       const rec = await vault.insertCommunication(dad_id, {
         direction: "draft",
         channel: null,
@@ -1193,9 +1215,9 @@ export function makeBff(vault, opts = {}) {
       // De-escalate vs document-this: the dad saying he wants this request
       // ON THE RECORD forces document mode even when the wording heuristic
       // misses it. on_record:false never downgrades a detected record ask.
-      const mode = on_record === true ? "document" : draftMode(cold);
-      log("comms.draft", { dad: dad_id, id: rec.id, kind: kind ?? "none", grade: soft_grade, mode });
-      return { written: 1, draft_id: rec.id, body: cold, soft_grade, mode, say: draftSayLine(mode) };
+      const mode = on_record === true || onRecord ? "document" : draftMode(cold);
+      log("comms.draft", { dad: dad_id, id: rec.id, kind: kind ?? "none", grade: soft_grade, mode, topic: r.topic });
+      return { written: 1, draft_id: rec.id, body: cold, soft_grade, mode, say: draftSayLine(mode), rewritten: true };
     },
 
     // GET /vault/comms/drafts {dad_id} -> [{draft_id, body, kind, created_at}]

@@ -97,7 +97,9 @@ test("walk paste 2 → Coach draft path: calm draft stored, not sent, one beat, 
     );
     assert.equal(draft.status, 200);
     assert.equal(draft.data.written, 1);
-    assert.equal(draft.data.body, COLD_FROM_PASTE_2);
+    // Slice 19b: every draft is rewritten — the calm draft keeps every
+    // sentence and adds a close; it is never the input verbatim.
+    assert.equal(draft.data.body, `${COLD_FROM_PASTE_2} Thank you.`);
     assert.equal(draft.data.soft_grade, "ready");
     assert.equal(draft.data.mode, "document");
     assert.equal(draft.data.say, "Not sent. Next: send it yourself — it puts your ask on the record.");
