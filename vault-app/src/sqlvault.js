@@ -36,6 +36,9 @@ const CANDIDATE_COLS = `id, dad_id, pipe, created_at, source, source_event_id, q
 const NOTIFICATION_COLS = `id, dad_id, created_at, kind, slot,
   to_char(for_date, 'YYYY-MM-DD') as for_date, title, due_start, due_end, status`;
 
+const PLAN_TOPIC_COLS = `dad_id, topic_key, position, status, choice, detail, stance, depth,
+  example_shown, updated_at`;
+
 export class SqlVault {
   constructor(exec) {
     this.exec = exec;
@@ -333,6 +336,68 @@ export class SqlVault {
         returning id;`,
     );
     return rows?.length ?? 0;
+  }
+
+  // ---- parenting plan (vault/011_parenting_plan.sql) ----------------------
+
+  async ensurePlanTopics(dadId, topics) {
+    let created = 0;
+    for (const { key, position } of topics) {
+      const rows = await this.exec(
+        `insert into plan_topics (dad_id, topic_key, position)
+         values (${lit(dadId)}, ${lit(key)}, ${Number(position)})
+         on conflict (dad_id, topic_key) do nothing
+         returning topic_key;`,
+      );
+      created += rows?.length ?? 0;
+    }
+    return created;
+  }
+
+  async listPlanTopics(dadId) {
+    return (
+      (await this.exec(
+        `select ${PLAN_TOPIC_COLS} from plan_topics
+          where dad_id = ${lit(dadId)} order by position;`,
+      )) ?? []
+    );
+  }
+
+  async updatePlanTopic(dadId, key, patch) {
+    const sets = [];
+    for (const col of ["status", "choice", "detail", "stance", "depth"]) {
+      if (col in patch) sets.push(`${col} = ${lit(patch[col])}`);
+    }
+    if ("example_shown" in patch) sets.push(`example_shown = ${patch.example_shown ? "true" : "false"}`);
+    sets.push("updated_at = now()");
+    const rows = await this.exec(
+      `update plan_topics set ${sets.join(", ")}
+        where dad_id = ${lit(dadId)} and topic_key = ${lit(key)}
+        returning ${PLAN_TOPIC_COLS};`,
+    );
+    return rows?.[0] ?? null;
+  }
+
+  async insertPlanDraft(dadId, { kind, body }) {
+    const id = randomUUID();
+    const rows = await this.exec(
+      `insert into plan_drafts (id, dad_id, version, kind, body)
+       select ${lit(id)}, ${lit(dadId)}, coalesce(max(version), 0) + 1, ${lit(kind)}, ${lit(body)}
+         from plan_drafts where dad_id = ${lit(dadId)}
+       returning id, dad_id, version, kind, body, created_at;`,
+    );
+    const rec = rows?.[0];
+    log("plan.draft", { table: "plan_drafts", id, dad: dadId, version: rec?.version, kind });
+    return rec;
+  }
+
+  async latestPlanDraft(dadId, kind) {
+    const rows = await this.exec(
+      `select id, dad_id, version, kind, body, created_at from plan_drafts
+        where dad_id = ${lit(dadId)} and kind = ${lit(kind)}
+        order by version desc limit 1;`,
+    );
+    return rows?.[0] ?? null;
   }
 
   async listEvents(dadId) {

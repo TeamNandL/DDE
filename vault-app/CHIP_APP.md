@@ -343,6 +343,30 @@ always met). `missed` is computed past `due_end`. Any tell / intake /
 return answer inside an open window marks it `done`. No push — Chip calls
 `ensure` at entry and says an open, unread item's `title` once.
 
+### 11) Parenting Plan seat — Slice 14 (pointer)
+
+**Default path = these BFF routes. Planform stays soft-hidden** (not
+exposed, not linked; no Chip-vs-Planform ownership change).
+
+| Route | Does |
+|---|---|
+| `POST /vault/plan/topics/ensure {dad_id}` | the finite checklist (six core topics) |
+| `GET /vault/plan/topics?dad_id[&depth=deeper]` | status + `next` prompt (term explained first, menu) |
+| `POST /vault/plan/answer {dad_id, topic, choice, stance?, depth?, detail?}` | menu keys only; `stance` want \| trade_bait; `depth` simple (default) \| deeper |
+| `POST /vault/plan/stuck {dad_id, topic}` | 1st: ONE example · 2nd: park + move on |
+| `POST /vault/plan/park {dad_id, topic}` | park now, move on |
+| `POST /vault/plan/draft/regenerate {dad_id, kind: full\|prep}` | new bot-owned version |
+| `GET /vault/plan/draft?dad_id&kind=full\|prep` | latest version |
+
+Topic keys, easiest → hardest: `exchanges`, `holidays`, `schedule`,
+`rofr`, `medical_access`, `decision_making`. Tie-breaker is offered as
+"Ask for it. You can always give it back later." Medical gatekeeping is
+named as a documentable pattern (behavior only, never why). Menus only —
+every reply carries "Confirm every choice with your lawyer…"; not legal
+advice; assumes the dad has a lawyer. Not Coach, not Quill, not OFW, not
+court-prep capture: plan answers write none of those. No outside edits,
+no Google Doc sync.
+
 ### Auth header
 
 `Authorization: Bearer <token>` (preferred) or `X-DDE-Token: <token>`.

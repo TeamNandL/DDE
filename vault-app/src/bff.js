@@ -26,6 +26,17 @@ import {
   effectiveStatus,
   factLine,
 } from "./courtprep.js";
+import {
+  DRAFT_KINDS,
+  LAWYER_LINE,
+  PLAN_TOPICS,
+  TOPIC_KEYS,
+  checkAnswer,
+  nextTopic,
+  renderDraft,
+  topicDef,
+  topicPrompt,
+} from "./plan.js";
 
 function unknownDad() {
   const err = new Error("unknown dad");
@@ -193,6 +204,40 @@ export function makeBff(vault, opts = {}) {
   }
 
   const REVIEW_LABEL = { needs_reviewed: "Needs reviewed", kept: "Kept", tossed: "Tossed" };
+
+  // ---- Parenting Plan seat helpers (Slice 14) -------------------------------
+  async function planRows(dad_id) {
+    await vault.ensurePlanTopics(
+      dad_id,
+      PLAN_TOPICS.map((t, i) => ({ key: t.key, position: i + 1 })),
+    );
+    return vault.listPlanTopics(dad_id);
+  }
+
+  function planBad(msg, status = 400) {
+    return Object.assign(new Error(msg), { status });
+  }
+
+  function planTopicView(r) {
+    const def = topicDef(r.topic_key);
+    const pick = (list, key) => list.find((o) => o.key === key)?.label ?? null;
+    return {
+      topic: r.topic_key,
+      title: def.title,
+      status: r.status,
+      choice: r.choice ?? null,
+      choice_label: r.choice ? pick(def.options, r.choice) : null,
+      stance: r.stance ?? null,
+      depth: r.depth ?? "simple",
+      detail: r.detail ?? null,
+      detail_label: r.detail ? pick(def.deeper.options, r.detail) : null,
+    };
+  }
+
+  function planNext(rows, depth = "simple") {
+    const key = nextTopic(rows);
+    return key ? topicPrompt(key, depth) : null;
+  }
 
   function publicCandidate(c) {
     return {
@@ -470,6 +515,130 @@ export function makeBff(vault, opts = {}) {
       }
       log("notifications.mark", { dad: dad_id, id, status });
       return publicNotification(rec, new Date(opts.now ?? Date.now()));
+    },
+
+    // ---- Parenting Plan seat (Slice 14) ------------------------------------
+    // Menus only, one question at a time (easiest → hardest), every term
+    // explained first, any question skippable. Answers never touch intake,
+    // Coach drafts, candidates, or OFW. The draft is bot-owned: regenerated
+    // from answers, versioned, never edited from outside.
+
+    // POST /vault/plan/topics/ensure {dad_id} -> {created, topics, next}
+    async postPlanEnsure({ dad_id }) {
+      await requireDad(dad_id);
+      const created = await vault.ensurePlanTopics(
+        dad_id,
+        PLAN_TOPICS.map((t, i) => ({ key: t.key, position: i + 1 })),
+      );
+      const rows = await vault.listPlanTopics(dad_id);
+      log("plan.ensure", { dad: dad_id, created });
+      return { created, topics: rows.map(planTopicView), next: planNext(rows), lawyer_line: LAWYER_LINE };
+    },
+
+    // GET /vault/plan/topics {dad_id, depth?} -> {topics, next, counts}
+    async getPlanTopics({ dad_id, depth = "simple" }) {
+      await requireDad(dad_id);
+      if (!["simple", "deeper"].includes(depth)) throw planBad("depth must be simple or deeper");
+      const rows = await planRows(dad_id);
+      const count = (st) => rows.filter((r) => r.status === st).length;
+      return {
+        topics: rows.map(planTopicView),
+        counts: { open: count("open"), answered: count("answered"), parked: count("parked") },
+        next: planNext(rows, depth),
+        lawyer_line: LAWYER_LINE,
+      };
+    },
+
+    // POST /vault/plan/answer {dad_id, topic, choice, stance?, depth?, detail?}
+    async postPlanAnswer({ dad_id, topic, choice, stance, depth, detail }) {
+      await requireDad(dad_id);
+      const a = checkAnswer({
+        topic,
+        choice,
+        stance: stance ?? "want",
+        depth: depth ?? "simple",
+        detail: detail ?? null,
+      });
+      await planRows(dad_id);
+      const rec = await vault.updatePlanTopic(dad_id, a.topic, {
+        status: "answered",
+        choice: a.choice,
+        detail: a.detail,
+        stance: a.stance,
+        depth: a.depth,
+      });
+      const rows = await vault.listPlanTopics(dad_id);
+      log("plan.answer", { dad: dad_id, topic: a.topic, stance: a.stance, depth: a.depth });
+      return { topic: planTopicView(rec), next: planNext(rows), lawyer_line: LAWYER_LINE };
+    },
+
+    // POST /vault/plan/stuck {dad_id, topic}
+    // Stuck rule: the FIRST stuck gets one example; the next stuck parks the
+    // topic and moves on. Never a second example.
+    async postPlanStuck({ dad_id, topic }) {
+      await requireDad(dad_id);
+      const def = topicDef(topic);
+      if (!def) throw planBad("unknown topic");
+      const rows = await planRows(dad_id);
+      const row = rows.find((r) => r.topic_key === topic);
+      if (!row.example_shown && row.status !== "parked") {
+        await vault.updatePlanTopic(dad_id, topic, { example_shown: true });
+        log("plan.stuck", { dad: dad_id, topic, step: "example" });
+        return {
+          parked: false,
+          example: def.example,
+          line: "Here's one example. Pick from the menu — or say stuck again and we'll park it and move on.",
+          prompt: topicPrompt(topic),
+          lawyer_line: LAWYER_LINE,
+        };
+      }
+      return this.postPlanPark({ dad_id, topic }, "stuck");
+    },
+
+    // POST /vault/plan/park {dad_id, topic}
+    async postPlanPark({ dad_id, topic }, via = "park") {
+      await requireDad(dad_id);
+      if (!topicDef(topic)) throw planBad("unknown topic");
+      await planRows(dad_id);
+      const rec = await vault.updatePlanTopic(dad_id, topic, { status: "parked" });
+      const rows = await vault.listPlanTopics(dad_id);
+      log("plan.park", { dad: dad_id, topic, via });
+      return {
+        parked: true,
+        topic: planTopicView(rec),
+        line: "Parked. We'll move on — this one goes to your lawyer.",
+        next: planNext(rows),
+        lawyer_line: LAWYER_LINE,
+      };
+    },
+
+    // POST /vault/plan/draft/regenerate {dad_id, kind: full|prep} -> new version
+    async postPlanRegenerate({ dad_id, kind = "full" }) {
+      await requireDad(dad_id);
+      if (!DRAFT_KINDS.includes(kind)) throw planBad("kind must be full or prep");
+      const rows = await planRows(dad_id);
+      // Version is assigned by the store; render with the number it will get.
+      const current = Math.max(
+        (await vault.latestPlanDraft(dad_id, "full"))?.version ?? 0,
+        (await vault.latestPlanDraft(dad_id, "prep"))?.version ?? 0,
+      );
+      const rec = await vault.insertPlanDraft(dad_id, { kind, body: renderDraft(kind, rows, current + 1) });
+      return { version: rec.version, kind: rec.kind, body: rec.body, lawyer_line: LAWYER_LINE };
+    },
+
+    // GET /vault/plan/draft {dad_id, kind?} -> latest version of that kind
+    async getPlanDraft({ dad_id, kind = "full" }) {
+      await requireDad(dad_id);
+      if (!DRAFT_KINDS.includes(kind)) throw planBad("kind must be full or prep");
+      const rec = await vault.latestPlanDraft(dad_id, kind);
+      if (!rec) throw planBad("no draft yet — regenerate first", 404);
+      return {
+        version: rec.version,
+        kind: rec.kind,
+        body: rec.body,
+        created_at: rec.created_at,
+        lawyer_line: LAWYER_LINE,
+      };
     },
 
     // GET /vault/chip_entry {dad_id}

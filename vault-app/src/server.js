@@ -43,6 +43,13 @@ export const PHASE1_ROUTES = [
   "PUT /vault/state",
   "GET /vault/progress",
   "GET /vault/candidates",
+  "POST /vault/plan/topics/ensure",
+  "GET /vault/plan/topics",
+  "POST /vault/plan/answer",
+  "POST /vault/plan/stuck",
+  "POST /vault/plan/park",
+  "POST /vault/plan/draft/regenerate",
+  "GET /vault/plan/draft",
   "POST /vault/candidates/review",
   "GET /vault/notifications",
   "POST /vault/checkins/ensure",
@@ -334,6 +341,63 @@ export async function handleBffRequest(bff, req, url, body) {
     await gateDad(bff, req, dad_id);
     log("http.progress", { dad: dad_id });
     return { status: 200, body: await bff.getVaultProgress({ dad_id }) };
+  }
+
+  // Parenting Plan seat (Slice 14). Log hygiene: ids + topic keys only.
+  if (method === "POST" && path === "/vault/plan/topics/ensure") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    log("http.plan.ensure", { dad: dad_id });
+    return { status: 200, body: await bff.postPlanEnsure({ dad_id }) };
+  }
+
+  if (method === "GET" && path === "/vault/plan/topics") {
+    const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
+    await gateDad(bff, req, dad_id);
+    log("http.plan.topics", { dad: dad_id });
+    return { status: 200, body: await bff.getPlanTopics({ dad_id, depth: q.get("depth") || "simple" }) };
+  }
+
+  if (method === "POST" && path === "/vault/plan/answer") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    log("http.plan.answer", { dad: dad_id });
+    return {
+      status: 200,
+      body: await bff.postPlanAnswer({
+        dad_id,
+        topic: body.topic,
+        choice: body.choice,
+        stance: body.stance,
+        depth: body.depth,
+        detail: body.detail,
+      }),
+    };
+  }
+
+  if (method === "POST" && (path === "/vault/plan/stuck" || path === "/vault/plan/park")) {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    log(path === "/vault/plan/stuck" ? "http.plan.stuck" : "http.plan.park", { dad: dad_id });
+    const args = { dad_id, topic: body.topic };
+    return {
+      status: 200,
+      body: path === "/vault/plan/stuck" ? await bff.postPlanStuck(args) : await bff.postPlanPark(args),
+    };
+  }
+
+  if (method === "POST" && path === "/vault/plan/draft/regenerate") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    log("http.plan.regenerate", { dad: dad_id });
+    return { status: 200, body: await bff.postPlanRegenerate({ dad_id, kind: body.kind ?? "full" }) };
+  }
+
+  if (method === "GET" && path === "/vault/plan/draft") {
+    const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
+    await gateDad(bff, req, dad_id);
+    log("http.plan.draft", { dad: dad_id });
+    return { status: 200, body: await bff.getPlanDraft({ dad_id, kind: q.get("kind") || "full" }) };
   }
 
   if (method === "GET" && path === "/vault/candidates") {

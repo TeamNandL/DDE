@@ -77,6 +77,8 @@ export class Vault {
     this.state = new Map(); // dad_id -> single state row (upserted)
     this.candidate_facts = []; // court-prep candidates (claim only, low)
     this.notifications = []; // court-prep check-ins
+    this.plan_topics = []; // parenting plan checklist (Slice 14)
+    this.plan_drafts = []; // bot-owned versioned drafts
   }
 
   insertEvent(dadId, row) {
@@ -411,6 +413,57 @@ export class Vault {
       }
     }
     return done;
+  }
+
+  // ---- parenting plan (vault/011_parenting_plan.sql twin) -------------------
+
+  ensurePlanTopics(dadId, topics) {
+    let created = 0;
+    for (const { key, position } of topics) {
+      if (this.plan_topics.some((t) => t.dad_id === dadId && t.topic_key === key)) continue;
+      this.plan_topics.push({
+        dad_id: dadId,
+        topic_key: key,
+        position,
+        status: "open",
+        choice: null,
+        detail: null,
+        stance: null,
+        depth: "simple",
+        example_shown: false,
+        updated_at: new Date().toISOString(),
+      });
+      created += 1;
+    }
+    return created;
+  }
+
+  listPlanTopics(dadId) {
+    return this.plan_topics
+      .filter((t) => t.dad_id === dadId)
+      .slice()
+      .sort((a, b) => a.position - b.position);
+  }
+
+  updatePlanTopic(dadId, key, patch) {
+    const rec = this.plan_topics.find((t) => t.dad_id === dadId && t.topic_key === key);
+    if (!rec) return null;
+    Object.assign(rec, patch, { updated_at: new Date().toISOString() });
+    return rec;
+  }
+
+  insertPlanDraft(dadId, { kind, body }) {
+    const version =
+      Math.max(0, ...this.plan_drafts.filter((d) => d.dad_id === dadId).map((d) => d.version)) + 1;
+    const rec = { id: randomUUID(), dad_id: dadId, version, kind, body, created_at: new Date().toISOString() };
+    this.plan_drafts.push(rec);
+    log("plan.draft", { table: "plan_drafts", id: rec.id, dad: dadId, version, kind });
+    return rec;
+  }
+
+  latestPlanDraft(dadId, kind) {
+    const rows = this.plan_drafts.filter((d) => d.dad_id === dadId && d.kind === kind);
+    return rows.sort((a, b) => b.version - a.version)[0] ?? null;
   }
 
   // Read helpers used by spreadsheet views (same names as SqlVault).
