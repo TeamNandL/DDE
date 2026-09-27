@@ -292,7 +292,7 @@ test("POST /vault/notice: 404 when the dad has no events yet", async () => {
   }
 });
 
-test("BLOCKER auth on /vault/notice: 401 no token, 404 unknown dad, 403 cross-dad", async () => {
+test("BLOCKER auth on /vault/notice: 401 no token, 401 unknown dad (F1), 403 cross-dad", async () => {
   const s = await start();
   const dadA = randomUUID();
   const dadB = randomUUID();
@@ -310,7 +310,7 @@ test("BLOCKER auth on /vault/notice: 401 no token, 404 unknown dad, 403 cross-da
 
     // Unprovisioned dad → 404 before any token check.
     const unknown = await jsonReq(s.base, "POST", "/vault/notice", { dad_id: randomUUID() });
-    assert.equal(unknown.status, 404);
+    assert.equal(unknown.status, 401);
 
     // No token → 401.
     const noTok = await jsonReq(s.base, "POST", "/vault/notice", { dad_id: dadA });

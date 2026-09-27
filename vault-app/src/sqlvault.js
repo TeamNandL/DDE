@@ -580,6 +580,43 @@ export class SqlVault {
     );
   }
 
+  // ---- Slice 21: export + delete. Called from the operator path (unscoped
+  // owner) or, for export, inside a bound request where RLS limits rows to
+  // the dad anyway. ---------------------------------------------------------
+
+  static DAD_TABLES = [
+    "events", "communications", "documents", "month_summary", "state",
+    "candidate_facts", "notifications", "plan_topics", "plan_drafts",
+    "translations", "translator_calendar_candidates", "involvement_fields",
+    "legal_intakes", "legal_handoff_drafts",
+  ];
+
+  async exportAll(dadId) {
+    const out = {};
+    for (const t of SqlVault.DAD_TABLES) {
+      out[t] = (await this.exec(`select * from ${t} where dad_id = ${lit(dadId)};`)) ?? [];
+    }
+    return out;
+  }
+
+  /** HARD wipe: children before parents (FKs). Returns counts removed. */
+  async wipeDad(dadId) {
+    const counts = {};
+    const order = [
+      "legal_handoff_drafts", "legal_intakes",
+      "translator_calendar_candidates", "translations",
+      "plan_drafts", "plan_topics", "involvement_fields",
+      "notifications", "candidate_facts",
+      "month_summary", "documents", "communications", "events",
+      "state",
+    ];
+    for (const t of order) {
+      const rows = (await this.exec(`delete from ${t} where dad_id = ${lit(dadId)} returning 1;`)) ?? [];
+      counts[t] = rows.length;
+    }
+    return counts;
+  }
+
   async verifiedExport(dadId) {
     return (
       (await this.exec(

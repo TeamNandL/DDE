@@ -233,7 +233,7 @@ test("drafts list excludes sent/pulled comms; no send endpoint for drafts exists
   }
 });
 
-test("validation + gates: empty body 400, unknown kind 400, 404/401/403 on both routes", async () => {
+test("validation + gates: empty body 400, unknown kind 400, 401/401/403 on both routes (F1: unknown dad → 401)", async () => {
   const s = await start();
   try {
     const a = await provisionedDad(s.base);
@@ -263,7 +263,7 @@ test("validation + gates: empty body 400, unknown kind 400, 404/401/403 on both 
       dad_id: randomUUID(),
       body: "x",
     });
-    assert.equal(unknown.status, 404);
+    assert.equal(unknown.status, 401);
 
     const noTok = await jsonReq(s.base, "GET", `/vault/comms/drafts?dad_id=${a.dad_id}`);
     assert.equal(noTok.status, 401);

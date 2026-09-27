@@ -18,6 +18,8 @@ import { log } from "./logger.js";
 import { stripPii } from "./pii.js";
 import { clampProgressPatch, progressChipLine, progressLine, softGrade } from "./progress.js";
 import { createMemoryTokenStore, hashToken, isTokenExpired, shouldTouch, tokenTtlMs } from "./tokens.js";
+import { buildDadExport } from "./dadexport.js";
+import { createMemoryOpsStore, deleteGraceMs, exportFreshMs } from "./opsstore.js";
 import { parseSearchOpts } from "./search.js";
 import {
   candidateFacts,
@@ -176,6 +178,10 @@ export function tellFeedback(nextAction) {
 export function makeBff(vault, opts = {}) {
   const tokenStore = opts.tokenStore || createMemoryTokenStore();
   const ttlMs = opts.tokenTtlMs ?? tokenTtlMs();
+  // Slice 21 ledger: export receipts + deletions (operator metadata only).
+  const opsStore = opts.opsStore || createMemoryOpsStore();
+  const freshMs = opts.exportFreshMs ?? exportFreshMs();
+  const graceMs = opts.deleteGraceMs ?? deleteGraceMs();
 
   async function requireDad(dad_id) {
     const state = await vault.getState(dad_id);
@@ -425,10 +431,13 @@ export function makeBff(vault, opts = {}) {
 
     /**
      * Verify opaque provision token for dad_id against durable store.
-     * missing/unknown/revoked token → 401; idle past the TTL → 401 "token
-     * expired" (and the row is revoked on the spot, so the death survives a
-     * rollback); token belongs to another dad → 403. An accepted token has
-     * its last_seen_at slid forward (throttled) — 30 days of INACTIVITY.
+     * missing/unknown/revoked token → 401; requested dad does not exist
+     * (wiped or never provisioned) → 401 with the SAME body, checked before
+     * the cross-dad test so nothing leaks (Slice 21 F1); idle past the TTL →
+     * 401 "token expired" (and the row is revoked on the spot, so the death
+     * survives a rollback); token belongs to another existing dad → 403. An
+     * accepted token has its last_seen_at slid forward (throttled) — 30 days
+     * of INACTIVITY.
      */
     async checkToken(dad_id, token) {
       if (typeof token !== "string" || !token.trim()) {
@@ -440,6 +449,11 @@ export function makeBff(vault, opts = {}) {
       const row = await tokenStore.lookupActive(token_hash);
       if (!row) {
         const err = new Error("unauthorized");
+        err.status = 401;
+        throw err;
+      }
+      if (!(await vault.getState(dad_id))) {
+        const err = new Error("unauthorized"); // unknown dad: identical to revoked
         err.status = 401;
         throw err;
       }
@@ -487,6 +501,13 @@ export function makeBff(vault, opts = {}) {
     // token for an existing dad. Raw token returned once; hash stored.
     async mintToken({ dad_id }) {
       await requireDad(dad_id);
+      // A dad inside the deletion window gets no new token until Nick cancels.
+      const del = await opsStore.getDeletion(dad_id);
+      if (del && !del.cancelled_at && !del.purged_at) {
+        const err = new Error("deletion pending — cancel it first");
+        err.status = 409;
+        throw err;
+      }
       const token = `dde-stub-${randomUUID()}`;
       const at = new Date(opts.now ?? Date.now()).toISOString();
       await tokenStore.insert({
@@ -507,6 +528,103 @@ export function makeBff(vault, opts = {}) {
       const out = await this.mintToken({ dad_id });
       log("token.reissue", { dad: dad_id, revoked });
       return { ...out, revoked };
+    },
+
+    // ---- Slice 21: export (dad-facing OK) + delete (Nick only) ------------
+
+    /** Ledger. Exposed for tests/docs only. */
+    _opsStore: opsStore,
+
+    /**
+     * Build the dad's bundle and record a receipt. actor: 'dad' (HTTP, past
+     * the gate) or 'operator' (CLI). Returns the zip + receipt; the receipt is
+     * what later unlocks a delete.
+     */
+    async exportDad({ dad_id, actor = "dad", now }) {
+      await requireDad(dad_id);
+      const nowMs = now ?? opts.now ?? Date.now();
+      const all = await vault.exportAll(dad_id);
+      const built = buildDadExport({ dad_id, all, now: nowMs });
+      const receipt = await opsStore.insertReceipt({
+        dad_id,
+        sha256: built.sha256,
+        bytes: built.bytes,
+        actor,
+        created_at: new Date(nowMs).toISOString(),
+      });
+      log("export.receipt", { dad: dad_id, actor, bytes: built.bytes, claims: built.counts.claims, verified: built.counts.verified });
+      return { ...built, receipt };
+    },
+
+    // GET /vault/export {dad_id} -> application/zip. Dad-facing; same gate.
+    async getVaultExportZip({ dad_id }) {
+      return this.exportDad({ dad_id, actor: "dad" });
+    },
+
+    /**
+     * SOFT delete (Nick CLI only — no HTTP path exists). Server rail: refused
+     * (412) unless a receipt newer than DDE_EXPORT_FRESH_DAYS exists. Revokes
+     * every token now; data stays intact and cancelable until purge_at.
+     */
+    async requestDelete({ dad_id, now }) {
+      await requireDad(dad_id);
+      const nowMs = now ?? opts.now ?? Date.now();
+      const receipt = await opsStore.latestReceipt(dad_id);
+      const fresh = receipt && nowMs - Date.parse(receipt.created_at) <= freshMs;
+      if (!fresh) {
+        const err = new Error("export receipt required — export this dad first");
+        err.status = 412;
+        throw err;
+      }
+      const row = await opsStore.requestDeletion({
+        dad_id,
+        receipt_id: receipt.id,
+        requested_at: new Date(nowMs).toISOString(),
+        purge_at: new Date(nowMs + graceMs).toISOString(),
+      });
+      const revoked = await tokenStore.revokeAllForDad(dad_id);
+      log("delete.soft", { dad: dad_id, revoked, purge_at: row.purge_at });
+      return { ...row, revoked };
+    },
+
+    /** Cancel inside the window. Data untouched; tokens stay revoked (reissue). */
+    async cancelDelete({ dad_id, now }) {
+      await requireDad(dad_id);
+      const nowMs = now ?? opts.now ?? Date.now();
+      const row = await opsStore.cancelDeletion(dad_id, new Date(nowMs).toISOString());
+      if (!row) {
+        const err = new Error("no pending deletion");
+        err.status = 404;
+        throw err;
+      }
+      log("delete.cancel", { dad: dad_id });
+      return row;
+    },
+
+    /**
+     * HARD wipe every deletion whose window has passed (optionally one dad).
+     * Re-checks the receipt gate at wipe time. Irreversible: rows are gone
+     * from every table and the token rows are dropped. A tombstone
+     * (dad_id + timestamps + counts) stays in dde_deletions.
+     */
+    async purgeDue({ now, dad_id } = {}) {
+      const nowMs = now ?? opts.now ?? Date.now();
+      const due = (await opsStore.listDue(nowMs)).filter((d) => !dad_id || d.dad_id === dad_id);
+      const purged = [];
+      for (const d of due) {
+        const receipt = await opsStore.latestReceipt(d.dad_id);
+        if (!receipt) {
+          log("delete.purge_refused", { dad: d.dad_id, reason: "no_receipt" });
+          continue;
+        }
+        const counts = await vault.wipeDad(d.dad_id);
+        counts.tokens = await tokenStore.purgeDad(d.dad_id);
+        const at = new Date(nowMs).toISOString();
+        await opsStore.markPurged(d.dad_id, at, counts);
+        log("delete.purged", { dad: d.dad_id, rows: Object.values(counts).reduce((a, b) => a + b, 0) });
+        purged.push({ dad_id: d.dad_id, purged_at: at, counts });
+      }
+      return { purged, due: due.length };
     },
 
     // POST /vault/intake {dad_id, text, make_notice?} -> {written, chase}

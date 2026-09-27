@@ -165,6 +165,17 @@ export function createMemoryTokenStore() {
       }
       return n;
     },
+    /** Hard wipe (Slice 21): drop every token row for the dad. */
+    async purgeDad(dad_id) {
+      let n = 0;
+      for (const [h, row] of byHash) {
+        if (row.dad_id === dad_id) {
+          byHash.delete(h);
+          n += 1;
+        }
+      }
+      return n;
+    },
     async close() {},
   };
 }
@@ -276,6 +287,14 @@ function createJsonTokenStore(filePath) {
       if (n) save(data);
       return n;
     },
+    async purgeDad(dad_id) {
+      const data = load();
+      const before = data.tokens.length;
+      data.tokens = data.tokens.filter((t) => t.dad_id !== dad_id);
+      const n = before - data.tokens.length;
+      if (n) save(data);
+      return n;
+    },
     async close() {},
   };
 }
@@ -344,6 +363,10 @@ function createPostgresTokenStore(query) {
       const res = await query(
         `update dde_provision_tokens set revoked_at = now() where revoked_at is null`,
       );
+      return res?.rowCount ?? 0;
+    },
+    async purgeDad(dad_id) {
+      const res = await query(`delete from dde_provision_tokens where dad_id = $1`, [dad_id]);
       return res?.rowCount ?? 0;
     },
     async close() {},

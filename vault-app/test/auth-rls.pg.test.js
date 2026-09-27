@@ -7,7 +7,7 @@
 //   3. Views run security_invoker; dde_app cannot touch the token table.
 //   4. Scoped exec: an app-level bug asking for B's rows inside A's request
 //      gets nothing, and a write for B is refused by the database.
-//   5. Full HTTP auth matrix on every route runs through RLS: 401/403/404/200.
+//   5. Full HTTP auth matrix on every route runs through RLS: 401/403/401/200.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -81,8 +81,19 @@ test("PG RLS: every dad-scoped table has RLS on + dde_own_rows policy for dde_ap
         where table_schema = 'public' and column_name = 'dad_id'
           and table_name in (select tablename from pg_tables where schemaname = 'public')`,
     );
+    // Owner-only ledgers (tokens, export receipts, deletions) are exempt ONLY
+    // when dde_app truly has no privilege on them — asserted, not assumed.
+    const OWNER_ONLY = ["dde_provision_tokens", "dde_export_receipts", "dde_deletions"];
     for (const { table_name } of withDad) {
-      if (table_name === "dde_provision_tokens") continue; // owner-only; dde_app has no grant
+      if (OWNER_ONLY.includes(table_name)) {
+        const { rows: priv } = await store.query(
+          `select bool_or(has_table_privilege('dde_app', $1, p)) as any
+             from unnest(array['SELECT','INSERT','UPDATE','DELETE']) as p`,
+          [table_name],
+        );
+        assert.equal(priv[0].any, false, `${table_name} is owner-only (dde_app has no privilege)`);
+        continue;
+      }
       assert.ok(DAD_TABLES.includes(table_name), `${table_name} has dad_id but no RLS policy`);
     }
     const { rows: views } = await store.query(
@@ -168,7 +179,7 @@ test("PG scoped exec: an app bug asking for dad B inside dad A's request gets no
   }
 });
 
-test("PG auth matrix through RLS: every route 401 none/bad · 403 cross · 404 unknown · 200 own", { skip }, async () => {
+test("PG auth matrix through RLS: every route 401 none/bad · 403 cross · 401 unknown (F1) · 200 own", { skip }, async () => {
   const { store, bff } = await open();
   const server = createServer(bff);
   const addr = await listenServer(server, { host: "127.0.0.1", port: 0 });
@@ -178,11 +189,11 @@ test("PG auth matrix through RLS: every route 401 none/bad · 403 cross · 404 u
     const b = (await jsonReq(base, "POST", "/vault/provision", {})).data;
     const mint = async (id) => (await bff.mintToken({ dad_id: id })).token;
     const rows = await authMatrix(base, a, b, randomUUID(), mint);
-    assert.equal(rows.length, 42);
+    assert.equal(rows.length, 43);
     for (const r of rows) {
       assert.deepEqual(
         [r.none, r.bad, r.cross, r.unknown, r.own],
-        [401, 401, 403, 404, 200],
+        [401, 401, 403, 401, 200],
         `${r.route}: ${JSON.stringify(r.error)}`,
       );
     }

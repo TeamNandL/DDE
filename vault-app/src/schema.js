@@ -22,6 +22,7 @@ export const PROCESS_TRANSLATOR_SCHEMA_PATH = resolve(here, "../../vault/012_pro
 export const INVOLVEMENT_SCHEMA_PATH = resolve(here, "../../vault/013_involvement.sql");
 export const LEGAL_INTAKE_SCHEMA_PATH = resolve(here, "../../vault/014_legal_intake.sql");
 export const AUTH_RLS_SCHEMA_PATH = resolve(here, "../../vault/015_auth_rls.sql");
+export const EXPORT_DELETE_SCHEMA_PATH = resolve(here, "../../vault/016_export_delete.sql");
 
 export function readPhase1SchemaSql() {
   return readFileSync(SCHEMA_PATH, "utf8");
@@ -186,6 +187,16 @@ export async function applyAuthRlsSchema(exec) {
   await exec(sql);
 }
 
+// Export receipts + deletion ledger (Slice 21). Owner-only tables; must run
+// after 015 so the dde_app role exists for the revoke.
+export async function applyExportDeleteSchema(exec) {
+  const sql = readFileSync(EXPORT_DELETE_SCHEMA_PATH, "utf8");
+  if (!sql.trim()) throw new Error("016_export_delete.sql is empty");
+  for (const stmt of splitSqlStatements(sql)) {
+    await exec(stmt);
+  }
+}
+
 /** Phase 1 tables + FTS + noticed + return + progress + cold-ask + drafts (+grade) + court-prep. */
 export async function applyVaultSchema(exec) {
   await applyPhase1Schema(exec);
@@ -202,4 +213,5 @@ export async function applyVaultSchema(exec) {
   await applyInvolvementSchema(exec);
   await applyLegalIntakeSchema(exec);
   await applyAuthRlsSchema(exec);
+  await applyExportDeleteSchema(exec);
 }
