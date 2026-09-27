@@ -22,6 +22,7 @@ COPY vault/008_drafts.sql /app/vault/008_drafts.sql
 COPY vault/009_draft_grade.sql /app/vault/009_draft_grade.sql
 COPY vault/010_court_prep.sql /app/vault/010_court_prep.sql
 COPY vault/011_parenting_plan.sql /app/vault/011_parenting_plan.sql
+COPY vault/012_process_translator.sql /app/vault/012_process_translator.sql
 
 WORKDIR /app/vault-app
 COPY vault-app/package.json vault-app/package-lock.json ./

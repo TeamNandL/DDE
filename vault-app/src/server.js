@@ -50,6 +50,9 @@ export const PHASE1_ROUTES = [
   "POST /vault/plan/park",
   "POST /vault/plan/draft/regenerate",
   "GET /vault/plan/draft",
+  "POST /vault/translate/explain",
+  "GET /vault/translate/last",
+  "GET /vault/translate/list",
   "POST /vault/candidates/review",
   "GET /vault/notifications",
   "POST /vault/checkins/ensure",
@@ -398,6 +401,27 @@ export async function handleBffRequest(bff, req, url, body) {
     await gateDad(bff, req, dad_id);
     log("http.plan.draft", { dad: dad_id });
     return { status: 200, body: await bff.getPlanDraft({ dad_id, kind: q.get("kind") || "full" }) };
+  }
+
+  // Process Translator (Slice 15). Log hygiene: ids only — never the paste.
+  if (method === "POST" && path === "/vault/translate/explain") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    log("http.translate.explain", { dad: dad_id });
+    return { status: 200, body: await bff.postTranslateExplain({ dad_id, term: body.term, text: body.text }) };
+  }
+
+  if (method === "GET" && (path === "/vault/translate/last" || path === "/vault/translate/list")) {
+    const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
+    await gateDad(bff, req, dad_id);
+    log(path === "/vault/translate/last" ? "http.translate.last" : "http.translate.list", { dad: dad_id });
+    return {
+      status: 200,
+      body:
+        path === "/vault/translate/last"
+          ? await bff.getTranslateLast({ dad_id })
+          : await bff.getTranslateList({ dad_id, limit: q.get("limit") }),
+    };
   }
 
   if (method === "GET" && path === "/vault/candidates") {
