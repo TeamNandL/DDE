@@ -18,6 +18,7 @@ import { databaseUrl, openStore } from "../src/store.js";
 import { makeBff } from "../src/bff.js";
 import { buildExhibitPacket } from "../src/exhibit.js";
 import { disclosureSheetRows, exhibitPacketView } from "../src/export.js";
+import { createServer, listenServer } from "../src/server.js";
 
 const url = databaseUrl();
 
@@ -124,6 +125,84 @@ test(
       // Throwaway tenant — leave the database as it was found.
       for (const t of ["events", "communications", "documents", "month_summary", "state"]) {
         await store.query(`delete from ${t} where dad_id = $1`, [dad]);
+      }
+      await store.close();
+    }
+  },
+);
+
+// Slice 18 turned on Postgres RLS: reads run as the non-owner role dde_app
+// with dde.dad_id set transaction-locally. The bearer matrix asserts this
+// route answers 200 — but an empty packet is also a 200, and a filing that
+// silently comes back with zero exhibits is the worst failure this slice
+// has. So prove the content survives RLS, over real HTTP, not just the
+// status code.
+test(
+  "exhibit over HTTP under RLS: the filing is not silently empty, and stays verified-only",
+  { skip: url ? false : "BLOCKED: DATABASE_URL not set / database egress unavailable" },
+  async () => {
+    const store = await openStore({ databaseUrl: url });
+    const bff = makeBff(store.vault, { tokenStore: store.tokenStore });
+    const server = createServer(bff);
+    const addr = await listenServer(server, { host: "127.0.0.1", port: 0 });
+    const base = `http://127.0.0.1:${addr.port}`;
+    const close = () => new Promise((resolve) => server.close(resolve));
+
+    const req = async (method, path, body, token) => {
+      const headers = { "content-type": "application/json" };
+      if (token) headers.authorization = `Bearer ${token}`;
+      const res = await fetch(`${base}${path}`, {
+        method,
+        headers,
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      return { status: res.status, data: await res.json().catch(() => null) };
+    };
+
+    let dad;
+    try {
+      const prov = await req("POST", "/vault/provision", {});
+      assert.equal(prov.status, 200);
+      const { dad_id, token } = prov.data;
+      dad = dad_id;
+
+      // One verified, citable row — the only kind that may be filed.
+      const pull = await req(
+        "POST",
+        "/vault/comms/pull",
+        {
+          dad_id,
+          channel: "ofw",
+          source_ref: "ofw:export:2026-09-14",
+          body_cold: "OFW thread pulled for the September 14 exchange.",
+          sent_at: "2026-09-14T18:00:00.000Z",
+        },
+        token,
+      );
+      assert.equal(pull.status, 200);
+
+      // One claim row, which must never reach the filing.
+      await req("POST", "/vault/intake", { dad_id, text: VENT }, token);
+
+      const res = await req("GET", `/vault/exhibit?dad_id=${dad_id}`, null, token);
+      assert.equal(res.status, 200);
+      assert.equal(res.data.count, 1, "RLS must not zero out the filing");
+      assert.equal(res.data.exhibits.length, 1);
+      const [ex] = res.data.exhibits;
+      assert.equal(ex.label, "A");
+      assert.equal(ex.pipe, "verified");
+      assert.equal(ex.source_ref, "ofw:export:2026-09-14");
+      assert.equal(ex.dated, "2026-09-14");
+      // The vent's venom and location never enter a filing, RLS or not.
+      const serialized = JSON.stringify(res.data);
+      assert.ok(!serialized.includes("spiteful"));
+      assert.ok(!/Maple Street/.test(serialized));
+    } finally {
+      await close();
+      if (dad) {
+        for (const t of ["events", "communications", "documents", "month_summary", "state"]) {
+          await store.query(`delete from ${t} where dad_id = $1`, [dad]);
+        }
       }
       await store.close();
     }

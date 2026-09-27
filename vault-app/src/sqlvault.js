@@ -36,6 +36,20 @@ const CANDIDATE_COLS = `id, dad_id, pipe, created_at, source, source_event_id, q
 const NOTIFICATION_COLS = `id, dad_id, created_at, kind, slot,
   to_char(for_date, 'YYYY-MM-DD') as for_date, title, due_start, due_end, status`;
 
+const TRANSLATION_COLS = `id, dad_id, created_at, input_kind, input_cold, term_keys, verdict_request,
+  clock_flag, result`;
+const TRANSLATOR_CAND_COLS = `id, dad_id, translation_id, created_at, label, date_text,
+  to_char(on_date, 'YYYY-MM-DD') as on_date, visibility, status`;
+
+const INVOLVEMENT_COLS = `dad_id, kid_key, field_key, position, value,
+  to_char(asked_on, 'YYYY-MM-DD') as asked_on, asked_via, outcome, source, claim_status, updated_at`;
+
+const LEGAL_INTAKE_COLS = `id, dad_id, created_at, who, what_cold, urgency, flags, route, claim_status`;
+const HANDOFF_COLS = `id, intake_id, dad_id, version, body, created_at, sent_at`;
+
+const PLAN_TOPIC_COLS = `dad_id, topic_key, position, status, choice, detail, stance, depth,
+  example_shown, updated_at`;
+
 export class SqlVault {
   constructor(exec) {
     this.exec = exec;
@@ -333,6 +347,224 @@ export class SqlVault {
         returning id;`,
     );
     return rows?.length ?? 0;
+  }
+
+  // ---- parenting plan (vault/011_parenting_plan.sql) ----------------------
+
+  async ensurePlanTopics(dadId, topics) {
+    let created = 0;
+    for (const { key, position } of topics) {
+      const rows = await this.exec(
+        `insert into plan_topics (dad_id, topic_key, position)
+         values (${lit(dadId)}, ${lit(key)}, ${Number(position)})
+         on conflict (dad_id, topic_key) do nothing
+         returning topic_key;`,
+      );
+      created += rows?.length ?? 0;
+    }
+    return created;
+  }
+
+  async listPlanTopics(dadId) {
+    return (
+      (await this.exec(
+        `select ${PLAN_TOPIC_COLS} from plan_topics
+          where dad_id = ${lit(dadId)} order by position;`,
+      )) ?? []
+    );
+  }
+
+  async updatePlanTopic(dadId, key, patch) {
+    const sets = [];
+    for (const col of ["status", "choice", "detail", "stance", "depth"]) {
+      if (col in patch) sets.push(`${col} = ${lit(patch[col])}`);
+    }
+    if ("example_shown" in patch) sets.push(`example_shown = ${patch.example_shown ? "true" : "false"}`);
+    sets.push("updated_at = now()");
+    const rows = await this.exec(
+      `update plan_topics set ${sets.join(", ")}
+        where dad_id = ${lit(dadId)} and topic_key = ${lit(key)}
+        returning ${PLAN_TOPIC_COLS};`,
+    );
+    return rows?.[0] ?? null;
+  }
+
+  async insertPlanDraft(dadId, { kind, body }) {
+    const id = randomUUID();
+    const rows = await this.exec(
+      `insert into plan_drafts (id, dad_id, version, kind, body)
+       select ${lit(id)}, ${lit(dadId)}, coalesce(max(version), 0) + 1, ${lit(kind)}, ${lit(body)}
+         from plan_drafts where dad_id = ${lit(dadId)}
+       returning id, dad_id, version, kind, body, created_at;`,
+    );
+    const rec = rows?.[0];
+    log("plan.draft", { table: "plan_drafts", id, dad: dadId, version: rec?.version, kind });
+    return rec;
+  }
+
+  async latestPlanDraft(dadId, kind) {
+    const rows = await this.exec(
+      `select id, dad_id, version, kind, body, created_at from plan_drafts
+        where dad_id = ${lit(dadId)} and kind = ${lit(kind)}
+        order by version desc limit 1;`,
+    );
+    return rows?.[0] ?? null;
+  }
+
+  // ---- process translator (vault/012_process_translator.sql) ---------------
+
+  async insertTranslation(dadId, t, candidates = []) {
+    const id = randomUUID();
+    const rows = await this.exec(
+      `insert into translations (id, dad_id, input_kind, input_cold, term_keys, verdict_request, clock_flag, result)
+       values (${lit(id)}, ${lit(dadId)}, ${lit(t.input_kind)}, ${lit(t.input_cold)}, ${litArr(t.term_keys)},
+               ${t.verdict_request ? "true" : "false"}, ${t.clock_flag ? "true" : "false"},
+               ${lit(JSON.stringify(t.result))}::jsonb)
+       returning ${TRANSLATION_COLS};`,
+    );
+    const cands = [];
+    for (const c of candidates) {
+      const cr = await this.exec(
+        `insert into translator_calendar_candidates (id, dad_id, translation_id, label, date_text, on_date)
+         values (${lit(randomUUID())}, ${lit(dadId)}, ${lit(id)}, ${lit(c.label)}, ${lit(c.date_text)},
+                 ${c.on_date ? `${lit(c.on_date)}::date` : "null"})
+         returning ${TRANSLATOR_CAND_COLS};`,
+      );
+      cands.push(cr[0]);
+    }
+    log("translate.insert", { table: "translations", id, dad: dadId, kind: t.input_kind, cands: cands.length });
+    return { ...rows[0], calendar_candidates: cands };
+  }
+
+  async _withCands(rec) {
+    if (!rec) return null;
+    const cands =
+      (await this.exec(
+        `select ${TRANSLATOR_CAND_COLS} from translator_calendar_candidates
+          where translation_id = ${lit(rec.id)} order by created_at, on_date;`,
+      )) ?? [];
+    return { ...rec, calendar_candidates: cands };
+  }
+
+  async getTranslation(dadId, id) {
+    const rows = await this.exec(
+      `select ${TRANSLATION_COLS} from translations where dad_id = ${lit(dadId)} and id = ${lit(id)};`,
+    );
+    return this._withCands(rows?.[0]);
+  }
+
+  async lastTranslation(dadId) {
+    const rows = await this.exec(
+      `select ${TRANSLATION_COLS} from translations where dad_id = ${lit(dadId)}
+        order by created_at desc, id desc limit 1;`,
+    );
+    return this._withCands(rows?.[0]);
+  }
+
+  async listTranslations(dadId, limit = 20) {
+    return (
+      (await this.exec(
+        `select id, created_at, input_kind, term_keys, verdict_request, clock_flag from translations
+          where dad_id = ${lit(dadId)} order by created_at desc, id desc limit ${Number(limit)};`,
+      )) ?? []
+    );
+  }
+
+  // ---- involvement cheat sheet (vault/013_involvement.sql) ----------------
+
+  async ensureInvolvement(dadId, kidKey, fields) {
+    let created = 0;
+    for (const { key, position } of fields) {
+      const rows = await this.exec(
+        `insert into involvement_fields (dad_id, kid_key, field_key, position)
+         values (${lit(dadId)}, ${lit(kidKey)}, ${lit(key)}, ${Number(position)})
+         on conflict (dad_id, kid_key, field_key) do nothing
+         returning field_key;`,
+      );
+      created += rows?.length ?? 0;
+    }
+    return created;
+  }
+
+  async listInvolvementKids(dadId) {
+    const rows =
+      (await this.exec(
+        `select distinct kid_key from involvement_fields where dad_id = ${lit(dadId)} order by kid_key;`,
+      )) ?? [];
+    return rows.map((r) => r.kid_key);
+  }
+
+  async listInvolvement(dadId, kidKey) {
+    return (
+      (await this.exec(
+        `select ${INVOLVEMENT_COLS} from involvement_fields
+          where dad_id = ${lit(dadId)} and kid_key = ${lit(kidKey)} order by position;`,
+      )) ?? []
+    );
+  }
+
+  async updateInvolvementField(dadId, kidKey, key, patch) {
+    const sets = [];
+    for (const col of ["value", "asked_via", "outcome"]) {
+      if (col in patch) sets.push(`${col} = ${lit(patch[col])}`);
+    }
+    if ("asked_on" in patch) sets.push(`asked_on = ${patch.asked_on ? `${lit(patch.asked_on)}::date` : "null"}`);
+    sets.push("updated_at = now()");
+    const rows = await this.exec(
+      `update involvement_fields set ${sets.join(", ")}
+        where dad_id = ${lit(dadId)} and kid_key = ${lit(kidKey)} and field_key = ${lit(key)}
+        returning ${INVOLVEMENT_COLS};`,
+    );
+    log("involvement.update", { table: "involvement_fields", dad: dadId, field: key });
+    return rows?.[0] ?? null;
+  }
+
+  // ---- legal intake (vault/014_legal_intake.sql) ---------------------------
+
+  async insertLegalIntake(dadId, c) {
+    const id = randomUUID();
+    const rows = await this.exec(
+      `insert into legal_intakes (id, dad_id, who, what_cold, urgency, flags, route)
+       values (${lit(id)}, ${lit(dadId)}, ${lit(c.who)}, ${lit(c.what_cold)}, ${lit(c.urgency)},
+               ${litArr(c.flags)}, ${lit(c.route)})
+       returning ${LEGAL_INTAKE_COLS};`,
+    );
+    log("legal.intake", { table: "legal_intakes", id, dad: dadId, route: c.route });
+    return rows?.[0] ?? null;
+  }
+
+  async getLegalIntake(dadId, id) {
+    const rows = await this.exec(
+      `select ${LEGAL_INTAKE_COLS} from legal_intakes where dad_id = ${lit(dadId)} and id = ${lit(id)};`,
+    );
+    return rows?.[0] ?? null;
+  }
+
+  async latestLegalIntake(dadId) {
+    const rows = await this.exec(
+      `select ${LEGAL_INTAKE_COLS} from legal_intakes where dad_id = ${lit(dadId)}
+        order by created_at desc, id desc limit 1;`,
+    );
+    return rows?.[0] ?? null;
+  }
+
+  async latestHandoffDraft(intakeId) {
+    const rows = await this.exec(
+      `select ${HANDOFF_COLS} from legal_handoff_drafts where intake_id = ${lit(intakeId)}
+        order by version desc limit 1;`,
+    );
+    return rows?.[0] ?? null;
+  }
+
+  async insertHandoffDraft(dadId, intakeId, version, body) {
+    const id = randomUUID();
+    const rows = await this.exec(
+      `insert into legal_handoff_drafts (id, intake_id, dad_id, version, body)
+       values (${lit(id)}, ${lit(intakeId)}, ${lit(dadId)}, ${Number(version)}, ${lit(body)})
+       returning ${HANDOFF_COLS};`,
+    );
+    log("legal.handoff", { table: "legal_handoff_drafts", id, dad: dadId, version });
+    return rows?.[0] ?? null;
   }
 
   async listEvents(dadId) {

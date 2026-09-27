@@ -77,6 +77,13 @@ export class Vault {
     this.state = new Map(); // dad_id -> single state row (upserted)
     this.candidate_facts = []; // court-prep candidates (claim only, low)
     this.notifications = []; // court-prep check-ins
+    this.plan_topics = []; // parenting plan checklist (Slice 14)
+    this.plan_drafts = []; // bot-owned versioned drafts
+    this.translations = []; // process translator (Slice 15)
+    this.translator_calendar_candidates = []; // private_only, claim ≠ verified
+    this.involvement_fields = []; // involvement cheat sheet (Slice 16)
+    this.legal_intakes = []; // legal intake seat (Slice 17)
+    this.legal_handoff_drafts = []; // draft ≠ send: sent_at always null
   }
 
   insertEvent(dadId, row) {
@@ -411,6 +418,217 @@ export class Vault {
       }
     }
     return done;
+  }
+
+  // ---- parenting plan (vault/011_parenting_plan.sql twin) -------------------
+
+  ensurePlanTopics(dadId, topics) {
+    let created = 0;
+    for (const { key, position } of topics) {
+      if (this.plan_topics.some((t) => t.dad_id === dadId && t.topic_key === key)) continue;
+      this.plan_topics.push({
+        dad_id: dadId,
+        topic_key: key,
+        position,
+        status: "open",
+        choice: null,
+        detail: null,
+        stance: null,
+        depth: "simple",
+        example_shown: false,
+        updated_at: new Date().toISOString(),
+      });
+      created += 1;
+    }
+    return created;
+  }
+
+  listPlanTopics(dadId) {
+    return this.plan_topics
+      .filter((t) => t.dad_id === dadId)
+      .slice()
+      .sort((a, b) => a.position - b.position);
+  }
+
+  updatePlanTopic(dadId, key, patch) {
+    const rec = this.plan_topics.find((t) => t.dad_id === dadId && t.topic_key === key);
+    if (!rec) return null;
+    Object.assign(rec, patch, { updated_at: new Date().toISOString() });
+    return rec;
+  }
+
+  insertPlanDraft(dadId, { kind, body }) {
+    const version =
+      Math.max(0, ...this.plan_drafts.filter((d) => d.dad_id === dadId).map((d) => d.version)) + 1;
+    const rec = { id: randomUUID(), dad_id: dadId, version, kind, body, created_at: new Date().toISOString() };
+    this.plan_drafts.push(rec);
+    log("plan.draft", { table: "plan_drafts", id: rec.id, dad: dadId, version, kind });
+    return rec;
+  }
+
+  latestPlanDraft(dadId, kind) {
+    const rows = this.plan_drafts.filter((d) => d.dad_id === dadId && d.kind === kind);
+    return rows.sort((a, b) => b.version - a.version)[0] ?? null;
+  }
+
+  // ---- process translator (vault/012_process_translator.sql twin) ----------
+
+  insertTranslation(dadId, t, candidates = []) {
+    const rec = {
+      id: randomUUID(),
+      dad_id: dadId,
+      created_at: new Date().toISOString(),
+      input_kind: t.input_kind,
+      input_cold: t.input_cold,
+      term_keys: [...t.term_keys],
+      verdict_request: Boolean(t.verdict_request),
+      clock_flag: Boolean(t.clock_flag),
+      result: t.result,
+    };
+    this.translations.push(rec);
+    const cands = candidates.map((c) => {
+      const row = {
+        id: randomUUID(),
+        dad_id: dadId,
+        translation_id: rec.id,
+        created_at: rec.created_at,
+        label: c.label,
+        date_text: c.date_text,
+        on_date: c.on_date ?? null,
+        visibility: "private_only",
+        status: "candidate",
+      };
+      this.translator_calendar_candidates.push(row);
+      return row;
+    });
+    log("translate.insert", { table: "translations", id: rec.id, dad: dadId, kind: t.input_kind, cands: cands.length });
+    return { ...rec, calendar_candidates: cands };
+  }
+
+  _withCands(rec) {
+    if (!rec) return null;
+    const cands = this.translator_calendar_candidates.filter((c) => c.translation_id === rec.id);
+    return { ...rec, calendar_candidates: cands };
+  }
+
+  getTranslation(dadId, id) {
+    return this._withCands(this.translations.find((t) => t.dad_id === dadId && t.id === id));
+  }
+
+  lastTranslation(dadId) {
+    const rows = this.translations.filter((t) => t.dad_id === dadId);
+    return this._withCands(rows[rows.length - 1]);
+  }
+
+  listTranslations(dadId, limit = 20) {
+    return this.translations
+      .filter((t) => t.dad_id === dadId)
+      .slice()
+      .reverse()
+      .slice(0, limit)
+      .map((t) => ({
+        id: t.id,
+        created_at: t.created_at,
+        input_kind: t.input_kind,
+        term_keys: [...t.term_keys],
+        verdict_request: t.verdict_request,
+        clock_flag: t.clock_flag,
+      }));
+  }
+
+  // ---- involvement cheat sheet (vault/013_involvement.sql twin) -------------
+
+  ensureInvolvement(dadId, kidKey, fields) {
+    let created = 0;
+    for (const { key, position } of fields) {
+      if (this.involvement_fields.some((r) => r.dad_id === dadId && r.kid_key === kidKey && r.field_key === key)) {
+        continue;
+      }
+      this.involvement_fields.push({
+        dad_id: dadId,
+        kid_key: kidKey,
+        field_key: key,
+        position,
+        value: null,
+        asked_on: null,
+        asked_via: null,
+        outcome: null,
+        source: "dad_entered",
+        claim_status: "claim",
+        updated_at: new Date().toISOString(),
+      });
+      created += 1;
+    }
+    return created;
+  }
+
+  listInvolvementKids(dadId) {
+    return [...new Set(this.involvement_fields.filter((r) => r.dad_id === dadId).map((r) => r.kid_key))].sort();
+  }
+
+  listInvolvement(dadId, kidKey) {
+    return this.involvement_fields
+      .filter((r) => r.dad_id === dadId && r.kid_key === kidKey)
+      .slice()
+      .sort((a, b) => a.position - b.position);
+  }
+
+  updateInvolvementField(dadId, kidKey, key, patch) {
+    const rec = this.involvement_fields.find(
+      (r) => r.dad_id === dadId && r.kid_key === kidKey && r.field_key === key,
+    );
+    if (!rec) return null;
+    Object.assign(rec, patch, { updated_at: new Date().toISOString() });
+    log("involvement.update", { table: "involvement_fields", dad: dadId, field: key });
+    return rec;
+  }
+
+  // ---- legal intake (vault/014_legal_intake.sql twin) ----------------------
+
+  insertLegalIntake(dadId, c) {
+    const rec = {
+      id: randomUUID(),
+      dad_id: dadId,
+      created_at: new Date().toISOString(),
+      who: c.who,
+      what_cold: c.what_cold,
+      urgency: c.urgency,
+      flags: [...c.flags],
+      route: c.route,
+      claim_status: "claim",
+    };
+    this.legal_intakes.push(rec);
+    log("legal.intake", { table: "legal_intakes", id: rec.id, dad: dadId, route: c.route });
+    return rec;
+  }
+
+  getLegalIntake(dadId, id) {
+    return this.legal_intakes.find((r) => r.dad_id === dadId && r.id === id) ?? null;
+  }
+
+  latestLegalIntake(dadId) {
+    const rows = this.legal_intakes.filter((r) => r.dad_id === dadId);
+    return rows[rows.length - 1] ?? null;
+  }
+
+  latestHandoffDraft(intakeId) {
+    const rows = this.legal_handoff_drafts.filter((d) => d.intake_id === intakeId);
+    return rows.sort((a, b) => b.version - a.version)[0] ?? null;
+  }
+
+  insertHandoffDraft(dadId, intakeId, version, body) {
+    const rec = {
+      id: randomUUID(),
+      intake_id: intakeId,
+      dad_id: dadId,
+      version,
+      body,
+      created_at: new Date().toISOString(),
+      sent_at: null,
+    };
+    this.legal_handoff_drafts.push(rec);
+    log("legal.handoff", { table: "legal_handoff_drafts", id: rec.id, dad: dadId, version });
+    return rec;
   }
 
   // Read helpers used by spreadsheet views (same names as SqlVault).

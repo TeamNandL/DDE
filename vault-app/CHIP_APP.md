@@ -343,10 +343,107 @@ always met). `missed` is computed past `due_end`. Any tell / intake /
 return answer inside an open window marks it `done`. No push — Chip calls
 `ensure` at entry and says an open, unread item's `title` once.
 
+### 11) Parenting Plan seat — Slice 14 (pointer)
+
+**Default path = these BFF routes. Planform stays soft-hidden** (not
+exposed, not linked; no Chip-vs-Planform ownership change).
+
+| Route | Does |
+|---|---|
+| `POST /vault/plan/topics/ensure {dad_id}` | the finite checklist (six core topics) |
+| `GET /vault/plan/topics?dad_id[&depth=deeper]` | status + `next` prompt (term explained first, menu) |
+| `POST /vault/plan/answer {dad_id, topic, choice, stance?, depth?, detail?}` | menu keys only; `stance` want \| trade_bait; `depth` simple (default) \| deeper |
+| `POST /vault/plan/stuck {dad_id, topic}` | 1st: ONE example · 2nd: park + move on |
+| `POST /vault/plan/park {dad_id, topic}` | park now, move on |
+| `POST /vault/plan/draft/regenerate {dad_id, kind: full\|prep}` | new bot-owned version |
+| `GET /vault/plan/draft?dad_id&kind=full\|prep` | latest version |
+
+Topic keys, easiest → hardest: `exchanges`, `holidays`, `schedule`,
+`rofr`, `medical_access`, `decision_making`. Tie-breaker is offered as
+"Ask for it. You can always give it back later." Medical gatekeeping is
+named as a documentable pattern (behavior only, never why). Menus only —
+every reply carries "Confirm every choice with your lawyer…"; not legal
+advice; assumes the dad has a lawyer. Not Coach, not Quill, not OFW, not
+court-prep capture: plan answers write none of those. No outside edits,
+no Google Doc sync.
+
+### 12) Process Translator — Slice 15 (pointer)
+
+**Dictionary, not coach.** Paste a paper's text or name a term → plain
+English: what it IS, how it generally works, what to be aware of. Never a
+personal win/lose; "good or bad for me?" → a sharp question for the lawyer.
+Every result carries the loud `lawyer_line`.
+
+| Route | Does |
+|---|---|
+| `POST /vault/translate/explain {dad_id, term \| text}` | exactly one of `term` / `text` (V1: paste or named term only) |
+| `GET /vault/translate/last?dad_id` | latest stored explanation |
+| `GET /vault/translate/list?dad_id[&limit]` | ids + term keys, newest first |
+
+Clocks: `clock` says a deadline exists — never a day-count, never a
+state table. `calendar_candidates` are dates as written in the paste:
+`visibility: private_only`, `status: candidate`, `verified: false`,
+`write_target: null` — never written to OFW or any calendar. Also
+explains lawyer-relationship basics (billing, updates, what to raise) —
+never "replace your lawyer". Not Coach, not Quill, not Parenting Plan
+(§11), not Legal Intake, no OFW case dates. MAP: deferred.
+
+### 13) Involvement Cheat Sheet — Slice 16 (pointer)
+
+**Living one-pager per kid. Say ONE Missing + ONE Next — never the whole
+sheet.** `kid` is a short label (lowercase slug), never a full name.
+
+| Route | Does |
+|---|---|
+| `POST /vault/involvement/ensure {dad_id, kid}` | the finite sheet for that kid |
+| `GET /vault/involvement?dad_id[&kid]` | fields (display) + `speak` {missing, next} |
+| `POST /vault/involvement/field {dad_id, kid, field, value}` | dad-entered value (claim) |
+| `POST /vault/involvement/field {dad_id, kid, field, asked_on, asked_via, outcome}` | he asked, didn't get it |
+| `GET /vault/involvement/next?dad_id[&kid]` | the one Missing + one Next |
+| `GET /vault/involvement/export?dad_id&kid` | one-pager text + claim footer |
+
+Fields: `grade`, `teacher`, `activities`, `friends`, `doctor`, `dentist`,
+`allergies`, `meds`, `therapist`, `emergency_contact_known` (yes|no).
+Jobs: deposition armor · asked-for blanks become a documentable pattern
+("asked the school on 2026-09-10; no answer as of …") — behavior only,
+never why · re-engagement (ask the school or provider directly). Values
+are claims, never verified; no SSNs, no money. Not Stan/OFW, not
+Parenting Plan (§11), not Process Translator (§12), not Coach, not Quill.
+
+### 14) Legal Intake seat — Slice 17 (pointer)
+
+**Intake + triage + handoff DRAFT. Never answers the law.** Every reply
+leads with the loud `lawyer_line` and carries ONE `next`.
+
+| Route | Does |
+|---|---|
+| `POST /vault/legal/intake {dad_id, who, what, urgency}` | capture v1; flags + route |
+| `GET /vault/legal/intake?dad_id[&id]` | that intake (or latest) + latest draft |
+| `POST /vault/legal/handoff {dad_id, id?}` | new packet draft — `sent_at: null`, never sent |
+
+`who`: `co_parent`, `my_lawyer`, `their_lawyer`, `court`, `school`,
+`provider`, `other`. `urgency` is the dad's pick (`today`, `this_week`,
+`this_month`, `not_sure`) — the bot never decides a legal emergency.
+Human-review `flags`: `safety`, `deadline_language`, `fire_lawyer`,
+`custody_emergency`, `money_numbers`, `out_of_venture`. Emergency feel →
+`human_review: true`, no numbers or jurisdiction rules invented. "What
+does this paper mean?" → `route: process_translator` (§12); "what should I
+do?" stays here and becomes a question for the lawyer. No send path, no
+counsel channel. Not Coach, not Quill, not Parenting Plan (§11).
+
 ### Auth header
 
 `Authorization: Bearer <token>` (preferred) or `X-DDE-Token: <token>`.
 Zero extra auth theater — no OAuth, no login page, no MFA on this slice.
+
+Auth matrix (Slice 18, every dad-scoped route): unknown dad → `404` ·
+no or bad token → `401` · another dad's token → `403` · own token → the
+route runs. After the gate, every database statement for that request runs
+as the non-owner role `dde_app` bound to that dad, and Postgres row-level
+security (`vault/015_auth_rls.sql`) limits reads and writes to his rows.
+Chip only ever holds a dad's bearer token — never a database credential.
+`POST /vault/provision` stays the only mint path; synthetic dads only until
+the real-dad gate is opened by Nick.
 
 ## Chip deep-link entry (minimal HTML)
 

@@ -17,6 +17,11 @@ export const COLD_ASK_SCHEMA_PATH = resolve(here, "../../vault/007_cold_ask.sql"
 export const DRAFTS_SCHEMA_PATH = resolve(here, "../../vault/008_drafts.sql");
 export const DRAFT_GRADE_SCHEMA_PATH = resolve(here, "../../vault/009_draft_grade.sql");
 export const COURT_PREP_SCHEMA_PATH = resolve(here, "../../vault/010_court_prep.sql");
+export const PARENTING_PLAN_SCHEMA_PATH = resolve(here, "../../vault/011_parenting_plan.sql");
+export const PROCESS_TRANSLATOR_SCHEMA_PATH = resolve(here, "../../vault/012_process_translator.sql");
+export const INVOLVEMENT_SCHEMA_PATH = resolve(here, "../../vault/013_involvement.sql");
+export const LEGAL_INTAKE_SCHEMA_PATH = resolve(here, "../../vault/014_legal_intake.sql");
+export const AUTH_RLS_SCHEMA_PATH = resolve(here, "../../vault/015_auth_rls.sql");
 
 export function readPhase1SchemaSql() {
   return readFileSync(SCHEMA_PATH, "utf8");
@@ -137,6 +142,50 @@ export async function applyCourtPrepSchema(exec) {
   }
 }
 
+// Parenting Plan seat (Slice 14): plan_topics + plan_drafts.
+export async function applyParentingPlanSchema(exec) {
+  const sql = readFileSync(PARENTING_PLAN_SCHEMA_PATH, "utf8");
+  if (!sql.trim()) throw new Error("011_parenting_plan.sql is empty");
+  for (const stmt of splitSqlStatements(sql)) {
+    await exec(stmt);
+  }
+}
+
+// Process Translator (Slice 15): translations + private calendar candidates.
+export async function applyProcessTranslatorSchema(exec) {
+  const sql = readFileSync(PROCESS_TRANSLATOR_SCHEMA_PATH, "utf8");
+  if (!sql.trim()) throw new Error("012_process_translator.sql is empty");
+  for (const stmt of splitSqlStatements(sql)) {
+    await exec(stmt);
+  }
+}
+
+// Involvement Cheat Sheet (Slice 16): involvement_fields.
+export async function applyInvolvementSchema(exec) {
+  const sql = readFileSync(INVOLVEMENT_SCHEMA_PATH, "utf8");
+  if (!sql.trim()) throw new Error("013_involvement.sql is empty");
+  for (const stmt of splitSqlStatements(sql)) {
+    await exec(stmt);
+  }
+}
+
+// Legal Intake seat (Slice 17): legal_intakes + legal_handoff_drafts.
+export async function applyLegalIntakeSchema(exec) {
+  const sql = readFileSync(LEGAL_INTAKE_SCHEMA_PATH, "utf8");
+  if (!sql.trim()) throw new Error("014_legal_intake.sql is empty");
+  for (const stmt of splitSqlStatements(sql)) {
+    await exec(stmt);
+  }
+}
+
+// Auth + RLS (Slice 18): dde_app role + dad_id policies. Run as ONE script
+// (DO blocks contain semicolons, so it is not statement-split).
+export async function applyAuthRlsSchema(exec) {
+  const sql = readFileSync(AUTH_RLS_SCHEMA_PATH, "utf8");
+  if (!sql.trim()) throw new Error("015_auth_rls.sql is empty");
+  await exec(sql);
+}
+
 /** Phase 1 tables + FTS + noticed + return + progress + cold-ask + drafts (+grade) + court-prep. */
 export async function applyVaultSchema(exec) {
   await applyPhase1Schema(exec);
@@ -148,4 +197,9 @@ export async function applyVaultSchema(exec) {
   await applyDraftsSchema(exec);
   await applyDraftGradeSchema(exec);
   await applyCourtPrepSchema(exec);
+  await applyParentingPlanSchema(exec);
+  await applyProcessTranslatorSchema(exec);
+  await applyInvolvementSchema(exec);
+  await applyLegalIntakeSchema(exec);
+  await applyAuthRlsSchema(exec);
 }

@@ -27,6 +27,39 @@ import {
   effectiveStatus,
   factLine,
 } from "./courtprep.js";
+import {
+  DRAFT_KINDS,
+  LAWYER_LINE,
+  PLAN_TOPICS,
+  TOPIC_KEYS,
+  checkAnswer,
+  nextTopic,
+  renderDraft,
+  topicDef,
+  topicPrompt,
+} from "./plan.js";
+import {
+  CLAIM_FOOTER as INVOLVEMENT_FOOTER,
+  FIELDS as INVOLVEMENT_FIELDS,
+  MAX_KIDS,
+  checkFieldUpdate,
+  checkKid,
+  fieldDef as involvementFieldDef,
+  fieldStatus,
+  missingNext,
+  renderOnePager,
+} from "./involvement.js";
+import {
+  DRAFT_FOOTER as LEGAL_DRAFT_FOOTER,
+  FLAG_LABELS as LEGAL_FLAG_LABELS,
+  HUMAN_LINE as LEGAL_HUMAN_LINE,
+  LAWYER_LINE as LEGAL_LAWYER_LINE,
+  capture as legalCapture,
+  needsHuman as legalNeedsHuman,
+  nextStep as legalNextStep,
+  renderPacket as legalRenderPacket,
+} from "./legalintake.js";
+import { LAWYER_LINE as TRANSLATOR_LAWYER_LINE, explain as translatorExplain } from "./translator.js";
 
 function unknownDad() {
   const err = new Error("unknown dad");
@@ -194,6 +227,159 @@ export function makeBff(vault, opts = {}) {
   }
 
   const REVIEW_LABEL = { needs_reviewed: "Needs reviewed", kept: "Kept", tossed: "Tossed" };
+
+  // ---- Parenting Plan seat helpers (Slice 14) -------------------------------
+  async function planRows(dad_id) {
+    await vault.ensurePlanTopics(
+      dad_id,
+      PLAN_TOPICS.map((t, i) => ({ key: t.key, position: i + 1 })),
+    );
+    return vault.listPlanTopics(dad_id);
+  }
+
+  function planBad(msg, status = 400) {
+    return Object.assign(new Error(msg), { status });
+  }
+
+  function planTopicView(r) {
+    const def = topicDef(r.topic_key);
+    const pick = (list, key) => list.find((o) => o.key === key)?.label ?? null;
+    return {
+      topic: r.topic_key,
+      title: def.title,
+      status: r.status,
+      choice: r.choice ?? null,
+      choice_label: r.choice ? pick(def.options, r.choice) : null,
+      stance: r.stance ?? null,
+      depth: r.depth ?? "simple",
+      detail: r.detail ?? null,
+      detail_label: r.detail ? pick(def.deeper.options, r.detail) : null,
+    };
+  }
+
+  function planNext(rows, depth = "simple") {
+    const key = nextTopic(rows);
+    return key ? topicPrompt(key, depth) : null;
+  }
+
+  // ---- Involvement Cheat Sheet helpers (Slice 16) ---------------------------
+  function todayIso() {
+    return new Date(opts.now ?? Date.now()).toISOString().slice(0, 10);
+  }
+
+  async function involvementRows(dad_id, kid) {
+    const kids = await vault.listInvolvementKids(dad_id);
+    if (!kids.includes(kid) && kids.length >= MAX_KIDS) {
+      throw Object.assign(new Error(`at most ${MAX_KIDS} kids`), { status: 400 });
+    }
+    const created = await vault.ensureInvolvement(
+      dad_id,
+      kid,
+      INVOLVEMENT_FIELDS.map((f, i) => ({ key: f.key, position: i + 1 })),
+    );
+    return { created, rows: await vault.listInvolvement(dad_id, kid) };
+  }
+
+  function involvementView(r) {
+    return {
+      field: r.field_key,
+      label: involvementFieldDef(r.field_key).label,
+      status: fieldStatus(r),
+      value: r.value ?? null,
+      asked_on: r.asked_on ?? null,
+      asked_via: r.asked_via ?? null,
+      outcome: r.outcome ?? null,
+      claim: true,
+      verified: false,
+    };
+  }
+
+  function involvementCounts(rows) {
+    const c = { filled: 0, asked: 0, blank: 0 };
+    for (const r of rows) c[fieldStatus(r)] += 1;
+    return c;
+  }
+
+  // One Missing + one Next: the requested kid, else the first kid (by key)
+  // with anything left, else the first kid.
+  async function involvementSpeak(dad_id, kid) {
+    const kids = kid ? [kid] : await vault.listInvolvementKids(dad_id);
+    let first = null;
+    for (const k of kids) {
+      const mn = missingNext(await vault.listInvolvement(dad_id, k), todayIso());
+      first ??= mn;
+      if (mn.missing) return mn;
+    }
+    return first ?? { missing: null, next: { job: "re_engagement", line: "Add a kid to start the cheat sheet." }, left: 0 };
+  }
+
+  // ---- Legal Intake helpers (Slice 17) ---------------------------------------
+  function publicHandoff(d) {
+    if (!d) return null;
+    return {
+      id: d.id,
+      version: d.version,
+      body: d.body,
+      created_at: d.created_at,
+      sent_at: null, // draft ≠ send — there is no send path
+      status: "draft",
+    };
+  }
+
+  function publicLegalIntake(rec, draft) {
+    const human = legalNeedsHuman(rec);
+    return {
+      id: rec.id,
+      created_at: rec.created_at,
+      who: rec.who,
+      urgency: rec.urgency,
+      what: rec.what_cold,
+      flags: [...rec.flags],
+      flag_lines: rec.flags.map((f) => LEGAL_FLAG_LABELS[f]),
+      human_review: human,
+      human_line: human ? LEGAL_HUMAN_LINE : null,
+      route: rec.route,
+      claim: true,
+      verified: false,
+      next: legalNextStep(rec, Boolean(draft)),
+      handoff: publicHandoff(draft),
+      lawyer_line: LEGAL_LAWYER_LINE,
+    };
+  }
+
+  async function requireLegalIntake(dad_id, id) {
+    if (id !== undefined && (typeof id !== "string" || !/^[0-9a-f-]{36}$/i.test(id))) {
+      throw Object.assign(new Error("id must be an intake id"), { status: 400 });
+    }
+    const rec = id ? await vault.getLegalIntake(dad_id, id) : await vault.latestLegalIntake(dad_id);
+    if (!rec) throw Object.assign(new Error("no intake yet"), { status: 404 });
+    return rec;
+  }
+
+  // Process Translator view: the stored, cold result + private candidates.
+  // Never the raw paste; the cold input stays in the row only.
+  function publicTranslation(rec) {
+    return {
+      id: rec.id,
+      created_at: rec.created_at,
+      input_kind: rec.input_kind,
+      term_keys: [...(rec.term_keys ?? [])],
+      verdict_request: Boolean(rec.verdict_request),
+      clock_flag: Boolean(rec.clock_flag),
+      ...rec.result,
+      calendar_candidates: (rec.calendar_candidates ?? []).map((c) => ({
+        id: c.id,
+        label: c.label,
+        date_text: c.date_text,
+        on_date: c.on_date ?? null,
+        visibility: c.visibility,
+        status: c.status,
+        verified: false,
+        write_target: null,
+      })),
+      lawyer_line: TRANSLATOR_LAWYER_LINE,
+    };
+  }
 
   function publicCandidate(c) {
     return {
@@ -471,6 +657,280 @@ export function makeBff(vault, opts = {}) {
       }
       log("notifications.mark", { dad: dad_id, id, status });
       return publicNotification(rec, new Date(opts.now ?? Date.now()));
+    },
+
+    // ---- Parenting Plan seat (Slice 14) ------------------------------------
+    // Menus only, one question at a time (easiest → hardest), every term
+    // explained first, any question skippable. Answers never touch intake,
+    // Coach drafts, candidates, or OFW. The draft is bot-owned: regenerated
+    // from answers, versioned, never edited from outside.
+
+    // POST /vault/plan/topics/ensure {dad_id} -> {created, topics, next}
+    async postPlanEnsure({ dad_id }) {
+      await requireDad(dad_id);
+      const created = await vault.ensurePlanTopics(
+        dad_id,
+        PLAN_TOPICS.map((t, i) => ({ key: t.key, position: i + 1 })),
+      );
+      const rows = await vault.listPlanTopics(dad_id);
+      log("plan.ensure", { dad: dad_id, created });
+      return { created, topics: rows.map(planTopicView), next: planNext(rows), lawyer_line: LAWYER_LINE };
+    },
+
+    // GET /vault/plan/topics {dad_id, depth?} -> {topics, next, counts}
+    async getPlanTopics({ dad_id, depth = "simple" }) {
+      await requireDad(dad_id);
+      if (!["simple", "deeper"].includes(depth)) throw planBad("depth must be simple or deeper");
+      const rows = await planRows(dad_id);
+      const count = (st) => rows.filter((r) => r.status === st).length;
+      return {
+        topics: rows.map(planTopicView),
+        counts: { open: count("open"), answered: count("answered"), parked: count("parked") },
+        next: planNext(rows, depth),
+        lawyer_line: LAWYER_LINE,
+      };
+    },
+
+    // POST /vault/plan/answer {dad_id, topic, choice, stance?, depth?, detail?}
+    async postPlanAnswer({ dad_id, topic, choice, stance, depth, detail }) {
+      await requireDad(dad_id);
+      const a = checkAnswer({
+        topic,
+        choice,
+        stance: stance ?? "want",
+        depth: depth ?? "simple",
+        detail: detail ?? null,
+      });
+      await planRows(dad_id);
+      const rec = await vault.updatePlanTopic(dad_id, a.topic, {
+        status: "answered",
+        choice: a.choice,
+        detail: a.detail,
+        stance: a.stance,
+        depth: a.depth,
+      });
+      const rows = await vault.listPlanTopics(dad_id);
+      log("plan.answer", { dad: dad_id, topic: a.topic, stance: a.stance, depth: a.depth });
+      return { topic: planTopicView(rec), next: planNext(rows), lawyer_line: LAWYER_LINE };
+    },
+
+    // POST /vault/plan/stuck {dad_id, topic}
+    // Stuck rule: the FIRST stuck gets one example; the next stuck parks the
+    // topic and moves on. Never a second example.
+    async postPlanStuck({ dad_id, topic }) {
+      await requireDad(dad_id);
+      const def = topicDef(topic);
+      if (!def) throw planBad("unknown topic");
+      const rows = await planRows(dad_id);
+      const row = rows.find((r) => r.topic_key === topic);
+      if (!row.example_shown && row.status !== "parked") {
+        await vault.updatePlanTopic(dad_id, topic, { example_shown: true });
+        log("plan.stuck", { dad: dad_id, topic, step: "example" });
+        return {
+          parked: false,
+          example: def.example,
+          line: "Here's one example. Pick from the menu — or say stuck again and we'll park it and move on.",
+          prompt: topicPrompt(topic),
+          lawyer_line: LAWYER_LINE,
+        };
+      }
+      return this.postPlanPark({ dad_id, topic }, "stuck");
+    },
+
+    // POST /vault/plan/park {dad_id, topic}
+    async postPlanPark({ dad_id, topic }, via = "park") {
+      await requireDad(dad_id);
+      if (!topicDef(topic)) throw planBad("unknown topic");
+      await planRows(dad_id);
+      const rec = await vault.updatePlanTopic(dad_id, topic, { status: "parked" });
+      const rows = await vault.listPlanTopics(dad_id);
+      log("plan.park", { dad: dad_id, topic, via });
+      return {
+        parked: true,
+        topic: planTopicView(rec),
+        line: "Parked. We'll move on — this one goes to your lawyer.",
+        next: planNext(rows),
+        lawyer_line: LAWYER_LINE,
+      };
+    },
+
+    // POST /vault/plan/draft/regenerate {dad_id, kind: full|prep} -> new version
+    async postPlanRegenerate({ dad_id, kind = "full" }) {
+      await requireDad(dad_id);
+      if (!DRAFT_KINDS.includes(kind)) throw planBad("kind must be full or prep");
+      const rows = await planRows(dad_id);
+      // Version is assigned by the store; render with the number it will get.
+      const current = Math.max(
+        (await vault.latestPlanDraft(dad_id, "full"))?.version ?? 0,
+        (await vault.latestPlanDraft(dad_id, "prep"))?.version ?? 0,
+      );
+      const rec = await vault.insertPlanDraft(dad_id, { kind, body: renderDraft(kind, rows, current + 1) });
+      return { version: rec.version, kind: rec.kind, body: rec.body, lawyer_line: LAWYER_LINE };
+    },
+
+    // GET /vault/plan/draft {dad_id, kind?} -> latest version of that kind
+    async getPlanDraft({ dad_id, kind = "full" }) {
+      await requireDad(dad_id);
+      if (!DRAFT_KINDS.includes(kind)) throw planBad("kind must be full or prep");
+      const rec = await vault.latestPlanDraft(dad_id, kind);
+      if (!rec) throw planBad("no draft yet — regenerate first", 404);
+      return {
+        version: rec.version,
+        kind: rec.kind,
+        body: rec.body,
+        created_at: rec.created_at,
+        lawyer_line: LAWYER_LINE,
+      };
+    },
+
+    // ---- Process Translator (Slice 15) --------------------------------------
+    // Dictionary, not coach. V1 input = pasted text OR a named term. Writes
+    // only translations + private_only calendar candidates — never an
+    // intake event, Coach draft, OFW row, court-prep candidate, plan row,
+    // or any calendar. Logs: ids + term keys only.
+
+    // POST /vault/translate/explain {dad_id, term? | text?}
+    async postTranslateExplain({ dad_id, term, text }) {
+      await requireDad(dad_id);
+      const t = translatorExplain({ term, text });
+      const rec = await vault.insertTranslation(dad_id, t, t.calendar_candidates);
+      log("translate.explain", {
+        dad: dad_id,
+        id: rec.id,
+        kind: t.input_kind,
+        terms: t.term_keys.slice(0, 5),
+        verdict: t.verdict_request ? 1 : 0,
+        clock: t.clock_flag ? 1 : 0,
+      });
+      return publicTranslation(rec);
+    },
+
+    // GET /vault/translate/last {dad_id}
+    async getTranslateLast({ dad_id }) {
+      await requireDad(dad_id);
+      const rec = await vault.lastTranslation(dad_id);
+      if (!rec) throw Object.assign(new Error("nothing translated yet"), { status: 404 });
+      return publicTranslation(rec);
+    },
+
+    // GET /vault/translate/list {dad_id, limit?} -> [{id, created_at, input_kind, term_keys, ...}]
+    async getTranslateList({ dad_id, limit = 20 }) {
+      await requireDad(dad_id);
+      const n = Math.max(1, Math.min(50, Number(limit) || 20));
+      return { items: await vault.listTranslations(dad_id, n), lawyer_line: TRANSLATOR_LAWYER_LINE };
+    },
+
+    // ---- Involvement Cheat Sheet (Slice 16) ---------------------------------
+    // Living one-pager per kid. Dad-entered claims only (never verified).
+    // Speaks ONE Missing + ONE Next. Writes involvement_fields only — never
+    // OFW, intake, Coach, plan, or translator rows. Logs: ids + field keys.
+
+    // POST /vault/involvement/ensure {dad_id, kid}
+    async postInvolvementEnsure({ dad_id, kid }) {
+      await requireDad(dad_id);
+      checkKid(kid);
+      const { created, rows } = await involvementRows(dad_id, kid);
+      log("involvement.ensure", { dad: dad_id, created });
+      return {
+        kid,
+        created,
+        counts: involvementCounts(rows),
+        speak: missingNext(rows, todayIso()),
+        claim_footer: INVOLVEMENT_FOOTER,
+      };
+    },
+
+    // GET /vault/involvement {dad_id, kid?} -> {kids:[{kid, fields, counts}], speak}
+    // The full sheet is for display; Chip says `speak` only.
+    async getInvolvement({ dad_id, kid }) {
+      await requireDad(dad_id);
+      if (kid) checkKid(kid);
+      const keys = kid ? [kid] : await vault.listInvolvementKids(dad_id);
+      const kids = [];
+      for (const k of keys) {
+        const rows = await vault.listInvolvement(dad_id, k);
+        if (rows.length) kids.push({ kid: k, fields: rows.map(involvementView), counts: involvementCounts(rows) });
+      }
+      if (kid && kids.length === 0) throw Object.assign(new Error("no sheet for that kid — ensure first"), { status: 404 });
+      return { kids, speak: await involvementSpeak(dad_id, kid), claim_footer: INVOLVEMENT_FOOTER };
+    },
+
+    // POST /vault/involvement/field {dad_id, kid, field, value | asked_on+asked_via+outcome}
+    async postInvolvementField({ dad_id, kid, field, value, asked_on, asked_via, outcome }) {
+      await requireDad(dad_id);
+      checkKid(kid);
+      const u = checkFieldUpdate({ field, value, asked_on, asked_via, outcome });
+      await involvementRows(dad_id, kid);
+      const rec = await vault.updateInvolvementField(dad_id, kid, u.field, u.patch);
+      const rows = await vault.listInvolvement(dad_id, kid);
+      log("involvement.field", { dad: dad_id, field: u.field, kind: "value" in u.patch ? "value" : "ask" });
+      return {
+        field: involvementView(rec),
+        speak: missingNext(rows, todayIso()),
+        claim_footer: INVOLVEMENT_FOOTER,
+      };
+    },
+
+    // GET /vault/involvement/next {dad_id, kid?} -> {missing, next, left}
+    async getInvolvementNext({ dad_id, kid }) {
+      await requireDad(dad_id);
+      if (kid) checkKid(kid);
+      return { ...(await involvementSpeak(dad_id, kid)), claim_footer: INVOLVEMENT_FOOTER };
+    },
+
+    // GET /vault/involvement/export {dad_id, kid} -> one-pager text
+    async getInvolvementExport({ dad_id, kid }) {
+      await requireDad(dad_id);
+      checkKid(kid);
+      const rows = await vault.listInvolvement(dad_id, kid);
+      if (!rows.length) throw Object.assign(new Error("no sheet for that kid — ensure first"), { status: 404 });
+      log("involvement.export", { dad: dad_id });
+      return {
+        kid,
+        as_of: todayIso(),
+        body: renderOnePager(kid, rows, todayIso()),
+        claim: true,
+        verified: false,
+        claim_footer: INVOLVEMENT_FOOTER,
+      };
+    },
+
+    // ---- Legal Intake seat (Slice 17) ----------------------------------------
+    // Intake + triage + handoff DRAFT. Never answers the law. Writes only
+    // legal_intakes + legal_handoff_drafts (sent_at locked null) — never a
+    // Quill event, Coach draft, OFW row, plan or translator row. Logs: ids,
+    // route, flag keys only.
+
+    // POST /vault/legal/intake {dad_id, who, what, urgency}
+    async postLegalIntake({ dad_id, who, what, urgency }) {
+      await requireDad(dad_id);
+      const c = legalCapture({ who, what, urgency });
+      const rec = await vault.insertLegalIntake(dad_id, c);
+      log("legal.capture", { dad: dad_id, id: rec.id, route: c.route, flags: c.flags });
+      return publicLegalIntake(rec, null);
+    },
+
+    // GET /vault/legal/intake {dad_id, id?} -> that intake (or latest) + latest draft
+    async getLegalIntake({ dad_id, id }) {
+      await requireDad(dad_id);
+      const rec = await requireLegalIntake(dad_id, id);
+      return publicLegalIntake(rec, await vault.latestHandoffDraft(rec.id));
+    },
+
+    // POST /vault/legal/handoff {dad_id, id?} -> new draft version (never sent)
+    async postLegalHandoff({ dad_id, id }) {
+      await requireDad(dad_id);
+      const rec = await requireLegalIntake(dad_id, id);
+      if (rec.route === "process_translator") {
+        throw Object.assign(
+          new Error("this is a what-does-this-mean question — use the Process Translator"),
+          { status: 409 },
+        );
+      }
+      const version = ((await vault.latestHandoffDraft(rec.id))?.version ?? 0) + 1;
+      const today = new Date(opts.now ?? Date.now()).toISOString().slice(0, 10);
+      const draft = await vault.insertHandoffDraft(dad_id, rec.id, version, legalRenderPacket(rec, version, today));
+      return { ...publicLegalIntake(rec, draft), draft_footer: LEGAL_DRAFT_FOOTER };
     },
 
     // GET /vault/chip_entry {dad_id}

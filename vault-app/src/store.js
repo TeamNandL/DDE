@@ -8,6 +8,7 @@
 import { Vault } from "./vault.js";
 import { SqlVault } from "./sqlvault.js";
 import { applyVaultSchema } from "./schema.js";
+import { currentDad, scopedSql } from "./scope.js";
 import "./env.js";
 
 export function databaseUrl() {
@@ -23,7 +24,15 @@ export async function openStore(opts = {}) {
   if (url) {
     const { default: pg } = await import("pg");
     const pool = new pg.Pool({ connectionString: url });
-    const exec = async (sql) => (await pool.query(sql)).rows;
+    // Bound request (bearer gate passed) → the statement runs as dde_app
+    // with dde.dad_id set, so RLS (vault/015_auth_rls.sql) applies.
+    // Unbound → owner (schema apply, provision, pre-gate checks).
+    const exec = async (sql) => {
+      const dad = currentDad();
+      if (!dad) return (await pool.query(sql)).rows;
+      const res = await pool.query(scopedSql(dad, sql));
+      return res[res.length - 1].rows;
+    };
     const query = (sql, params) => pool.query(sql, params);
     if (opts.applySchema !== false) {
       await applyVaultSchema(exec);

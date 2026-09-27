@@ -20,6 +20,7 @@ import { databaseUrl, openStore } from "./store.js";
 import { defaultJsonPath, openTokenStore } from "./tokens.js";
 import { DEMO_DAD_ID, seedDemo } from "./demo.js";
 import { log } from "./logger.js";
+import { bindDad, runRequestScope } from "./scope.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CHIP_ENTRY_HTML = readFileSync(resolve(__dirname, "../public/chip-entry.html"), "utf8");
@@ -43,6 +44,24 @@ export const PHASE1_ROUTES = [
   "PUT /vault/state",
   "GET /vault/progress",
   "GET /vault/candidates",
+  "POST /vault/plan/topics/ensure",
+  "GET /vault/plan/topics",
+  "POST /vault/plan/answer",
+  "POST /vault/plan/stuck",
+  "POST /vault/plan/park",
+  "POST /vault/plan/draft/regenerate",
+  "GET /vault/plan/draft",
+  "POST /vault/translate/explain",
+  "GET /vault/translate/last",
+  "GET /vault/translate/list",
+  "POST /vault/involvement/ensure",
+  "GET /vault/involvement",
+  "POST /vault/involvement/field",
+  "GET /vault/involvement/next",
+  "GET /vault/involvement/export",
+  "POST /vault/legal/intake",
+  "GET /vault/legal/intake",
+  "POST /vault/legal/handoff",
   "POST /vault/candidates/review",
   "GET /vault/notifications",
   "POST /vault/checkins/ensure",
@@ -139,6 +158,9 @@ export function extractToken(req) {
  * Order: dad exists → 404 unknown dad; then token → 401/403.
  * (Unprovisioned curls without a token must still get 404, not 401.)
  */
+// Auth matrix (Slice 18): unknown dad → 404 · no / bad token → 401 ·
+// token for another dad → 403 · own token → the route runs, and every SQL
+// statement after this point runs as dde_app bound to this dad (RLS).
 async function gateDad(bff, req, dad_id) {
   const state = await bff.getVaultState({ dad_id });
   if (!state) {
@@ -147,6 +169,7 @@ async function gateDad(bff, req, dad_id) {
     throw err;
   }
   await bff.checkToken(dad_id, extractToken(req));
+  bindDad(dad_id);
 }
 
 export async function handleBffRequest(bff, req, url, body) {
@@ -337,6 +360,155 @@ export async function handleBffRequest(bff, req, url, body) {
     return { status: 200, body: await bff.getVaultProgress({ dad_id }) };
   }
 
+  // Parenting Plan seat (Slice 14). Log hygiene: ids + topic keys only.
+  if (method === "POST" && path === "/vault/plan/topics/ensure") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    log("http.plan.ensure", { dad: dad_id });
+    return { status: 200, body: await bff.postPlanEnsure({ dad_id }) };
+  }
+
+  if (method === "GET" && path === "/vault/plan/topics") {
+    const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
+    await gateDad(bff, req, dad_id);
+    log("http.plan.topics", { dad: dad_id });
+    return { status: 200, body: await bff.getPlanTopics({ dad_id, depth: q.get("depth") || "simple" }) };
+  }
+
+  if (method === "POST" && path === "/vault/plan/answer") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    log("http.plan.answer", { dad: dad_id });
+    return {
+      status: 200,
+      body: await bff.postPlanAnswer({
+        dad_id,
+        topic: body.topic,
+        choice: body.choice,
+        stance: body.stance,
+        depth: body.depth,
+        detail: body.detail,
+      }),
+    };
+  }
+
+  if (method === "POST" && (path === "/vault/plan/stuck" || path === "/vault/plan/park")) {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    log(path === "/vault/plan/stuck" ? "http.plan.stuck" : "http.plan.park", { dad: dad_id });
+    const args = { dad_id, topic: body.topic };
+    return {
+      status: 200,
+      body: path === "/vault/plan/stuck" ? await bff.postPlanStuck(args) : await bff.postPlanPark(args),
+    };
+  }
+
+  if (method === "POST" && path === "/vault/plan/draft/regenerate") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    log("http.plan.regenerate", { dad: dad_id });
+    return { status: 200, body: await bff.postPlanRegenerate({ dad_id, kind: body.kind ?? "full" }) };
+  }
+
+  if (method === "GET" && path === "/vault/plan/draft") {
+    const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
+    await gateDad(bff, req, dad_id);
+    log("http.plan.draft", { dad: dad_id });
+    return { status: 200, body: await bff.getPlanDraft({ dad_id, kind: q.get("kind") || "full" }) };
+  }
+
+  // Legal Intake seat (Slice 17). Log hygiene: ids only — never the "what".
+  if (method === "POST" && path === "/vault/legal/intake") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    log("http.legal.intake", { dad: dad_id });
+    return {
+      status: 200,
+      body: await bff.postLegalIntake({ dad_id, who: body.who, what: body.what, urgency: body.urgency }),
+    };
+  }
+
+  if (method === "GET" && path === "/vault/legal/intake") {
+    const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
+    await gateDad(bff, req, dad_id);
+    log("http.legal.get", { dad: dad_id });
+    return { status: 200, body: await bff.getLegalIntake({ dad_id, id: q.get("id") || undefined }) };
+  }
+
+  if (method === "POST" && path === "/vault/legal/handoff") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    log("http.legal.handoff", { dad: dad_id });
+    return { status: 200, body: await bff.postLegalHandoff({ dad_id, id: body.id }) };
+  }
+
+  // Involvement Cheat Sheet (Slice 16). Log hygiene: ids only — never kid
+  // labels or values.
+  if (method === "POST" && path === "/vault/involvement/ensure") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    log("http.involvement.ensure", { dad: dad_id });
+    return { status: 200, body: await bff.postInvolvementEnsure({ dad_id, kid: body.kid }) };
+  }
+
+  if (method === "POST" && path === "/vault/involvement/field") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    log("http.involvement.field", { dad: dad_id });
+    return {
+      status: 200,
+      body: await bff.postInvolvementField({
+        dad_id,
+        kid: body.kid,
+        field: body.field,
+        value: body.value,
+        asked_on: body.asked_on,
+        asked_via: body.asked_via,
+        outcome: body.outcome,
+      }),
+    };
+  }
+
+  if (
+    method === "GET" &&
+    (path === "/vault/involvement" || path === "/vault/involvement/next" || path === "/vault/involvement/export")
+  ) {
+    const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
+    await gateDad(bff, req, dad_id);
+    const kid = q.get("kid") || undefined;
+    if (path === "/vault/involvement/next") {
+      log("http.involvement.next", { dad: dad_id });
+      return { status: 200, body: await bff.getInvolvementNext({ dad_id, kid }) };
+    }
+    if (path === "/vault/involvement/export") {
+      log("http.involvement.export", { dad: dad_id });
+      return { status: 200, body: await bff.getInvolvementExport({ dad_id, kid }) };
+    }
+    log("http.involvement.list", { dad: dad_id });
+    return { status: 200, body: await bff.getInvolvement({ dad_id, kid }) };
+  }
+
+  // Process Translator (Slice 15). Log hygiene: ids only — never the paste.
+  if (method === "POST" && path === "/vault/translate/explain") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    log("http.translate.explain", { dad: dad_id });
+    return { status: 200, body: await bff.postTranslateExplain({ dad_id, term: body.term, text: body.text }) };
+  }
+
+  if (method === "GET" && (path === "/vault/translate/last" || path === "/vault/translate/list")) {
+    const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
+    await gateDad(bff, req, dad_id);
+    log(path === "/vault/translate/last" ? "http.translate.last" : "http.translate.list", { dad: dad_id });
+    return {
+      status: 200,
+      body:
+        path === "/vault/translate/last"
+          ? await bff.getTranslateLast({ dad_id })
+          : await bff.getTranslateList({ dad_id, limit: q.get("limit") }),
+    };
+  }
+
   if (method === "GET" && path === "/vault/candidates") {
     const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
     await gateDad(bff, req, dad_id);
@@ -491,7 +663,7 @@ export function createServer(bff) {
       if (req.method !== "GET" && req.method !== "HEAD") {
         body = await readBody(req);
       }
-      const result = await handleBffRequest(bff, req, url, body);
+      const result = await runRequestScope(() => handleBffRequest(bff, req, url, body));
       const ct = result.contentType || "application/json; charset=utf-8";
       send(res, result.status, result.body, ct);
     } catch (err) {
