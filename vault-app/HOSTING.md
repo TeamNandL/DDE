@@ -76,3 +76,17 @@ Proof on any Postgres (zero skips required):
 
 Real dads stay closed: provision synthetic dads only until the Razor gate
 passes and Nick gives an exact yes.
+
+## Token lifecycle (Slice 20)
+
+Optional env: `DDE_TOKEN_TTL_DAYS` (default `30`; non-positive / non-numeric
+→ 30). Boot adds `expires_at` to `dde_provision_tokens` (idempotent
+`add column if not exists`); existing tokens expire at `created_at` + TTL,
+so tokens older than the TTL stop working on the first deploy — reissue them.
+
+Operator commands (run where the server's `DATABASE_URL` is set):
+
+    npm run token:revoke  -- --dad-id <uuid>
+    npm run token:reissue -- --dad-id <uuid>   # prints the new token once
+
+Proof: `DATABASE_URL=... node --test test/token-lifecycle.test.js test/token-lifecycle.pg.test.js`

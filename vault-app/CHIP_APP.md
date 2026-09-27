@@ -45,6 +45,7 @@ Content-Type: application/json
 { "dad_id"?: "<uuid>" }   // omit → server mints uuid
 
 → 200 { "dad_id": "<uuid>", "token": "dde-stub-<uuid>",
+        "expires_at": "<iso, mint + 30 days>",
         "missing_one": "Kids school name",
         "progress_line": "0 of 5 this week; still open: Kids school name" }
 → 409 if that dad_id already provisioned
@@ -473,6 +474,37 @@ security (`vault/015_auth_rls.sql`) limits reads and writes to his rows.
 Chip only ever holds a dad's bearer token — never a database credential.
 `POST /vault/provision` stays the only mint path; synthetic dads only until
 the real-dad gate is opened by Nick.
+
+### Token lifecycle (Slice 20 — logout / revoke / expiry)
+
+Same gate as every dad route (404 / 401 / 403 above). A dead token can't
+log itself out — that's a `401`, not an error to retry.
+
+```
+POST /vault/logout        { "dad_id": "<uuid>" }  + Bearer
+→ 200 { "logged_out": true }   // ONLY the presented token dies
+
+POST /vault/token/revoke  { "dad_id": "<uuid>" }  + Bearer
+→ 200 { "revoked": <n> }       // EVERY token for this dad dies, caller's too
+```
+
+**Expiry.** Every token expires `DDE_TOKEN_TTL_DAYS` (default **30**) after
+mint; provision returns `expires_at`. Tokens minted before Slice 20 (no
+`expires_at`) expire at `created_at` + TTL. Expired → `401 {"error":"token
+expired"}`; revoked / unknown → `401 {"error":"unauthorized"}`. Chip on
+either 401: stop, tell the dad his link needs a refresh — never retry, never
+provision again (provision on an existing dad is `409`).
+
+**New token after logout / revoke / expiry: operator only.** No HTTP route
+mints or reissues. Operator runs, with the server's `DATABASE_URL` (or
+`DDE_TOKENS_PATH`):
+
+```
+npm run token:reissue -- --dad-id <uuid>   # revoke all, print one fresh token + expires_at
+npm run token:revoke  -- --dad-id <uuid>   # revoke all (lost phone / leaked link)
+```
+
+Revoke never touches vault data — only tokens.
 
 ## Chip deep-link entry (minimal HTML)
 
