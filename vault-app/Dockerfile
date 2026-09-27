@@ -26,6 +26,7 @@ COPY vault/012_process_translator.sql /app/vault/012_process_translator.sql
 COPY vault/013_involvement.sql /app/vault/013_involvement.sql
 COPY vault/014_legal_intake.sql /app/vault/014_legal_intake.sql
 COPY vault/015_auth_rls.sql /app/vault/015_auth_rls.sql
+COPY vault/016_export_delete.sql /app/vault/016_export_delete.sql
 
 WORKDIR /app/vault-app
 COPY vault-app/package.json vault-app/package-lock.json ./

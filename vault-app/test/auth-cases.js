@@ -46,6 +46,7 @@ export function routeCases(dad_id, ctx = {}) {
     ["GET", q("/vault/comms/drafts")],
     ["POST", "/vault/comms/pull", { dad_id, channel: "ofw", source_ref: "ofw:alex:1", body_cold: "Pickup confirmed.", sent_at: "2026-09-20T17:00:00Z" }],
     ["GET", q("/vault/export/verified")],
+    ["GET", q("/vault/export")],
     ["GET", q("/vault/search", "&q=pickup")],
     // Slice 20 — these kill every token for the dad, so they run last and
     // each on a freshly minted token.

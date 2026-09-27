@@ -44,7 +44,7 @@ test("auth matrix (memory): 401 none/bad · 403 cross-dad · 404 unknown · 200 
       assert.equal(r.unknown, 404, `${r.route} unknown dad`);
       assert.equal(r.own, 200, `${r.route} own token: ${JSON.stringify(r.error)}`);
     }
-    assert.equal(rows.length, 42);
+    assert.equal(rows.length, 43);
   } finally {
     await s.close();
   }

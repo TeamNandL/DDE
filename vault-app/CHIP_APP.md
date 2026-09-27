@@ -525,6 +525,34 @@ CLI. Only `token:reissue` prints a raw token, once, to the operator.
 `last_seen_at = now()` at the first boot and roll onto the 30-day rule from
 there. Rollback: see `HOSTING.md` → *Rollback (Slice 20)*.
 
+### Dad export (Slice 21) — export yes, delete never from the app
+
+```
+GET /vault/export?dad_id=<uuid>   + Bearer
+→ 200 application/zip  (content-disposition: attachment; filename="dde-export-<date>.zip")
+→ 401 / 403 / 404 as every dad route
+```
+
+Zip layout:
+
+| File | Holds |
+| --- | --- |
+| `README.txt` | what each bucket means; "a claim is never placed in verified/" |
+| `claims/claims.json`, `claims/claims.txt` | every row with `pipe = 'claim'` **plus** every bot-owned working record (state, candidates, check-ins, plan topics/drafts, translations, involvement, legal intake/handoff drafts). Not proof. |
+| `verified/verified.json`, `verified/verified.txt` | **only** `pipe = 'verified'` rows from events / communications / documents / month_summary — the same set `verified_export` serves |
+
+Every string is PII-stripped (`src/pii.js`: no SSN/EIN, account, phone,
+street address) and any `dde-stub-` token is masked to its last 4. His own
+`dad_id` and row ids stay intact so he can cite a row. The server records
+an **export receipt** (id, dad_id, time, sha256, bytes, actor) in the
+owner-only ledger on every success — that receipt is what later unlocks a
+delete. Chip can offer "Want a copy of everything?" and call this route.
+
+**There is no delete in the app. None.** No route, no button, no confirm
+screen. Delete protects the dad from himself: a 2 a.m. rage-delete must be
+impossible from here. Delete is Nick-only, from the CLI, and only after an
+export receipt exists — see `HOSTING.md` → *Dad export + delete (Slice 21)*.
+
 ## Chip deep-link entry (minimal HTML)
 
 Same origin as BFF:

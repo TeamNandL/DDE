@@ -18,6 +18,7 @@ import { parseArgs } from "node:util";
 import { makeBff } from "./bff.js";
 import { databaseUrl, openStore } from "./store.js";
 import { defaultJsonPath, openTokenStore } from "./tokens.js";
+import { defaultOpsPath, openOpsStore } from "./opsstore.js";
 import { DEMO_DAD_ID, seedDemo } from "./demo.js";
 import { log } from "./logger.js";
 import { bindDad, runRequestScope } from "./scope.js";
@@ -72,6 +73,7 @@ export const PHASE1_ROUTES = [
   "GET /vault/comms/drafts",
   "POST /vault/comms/pull",
   "GET /vault/export/verified",
+  "GET /vault/export",
   "GET /vault/search",
   "POST /vault/logout",
   "POST /vault/panic",
@@ -86,11 +88,12 @@ function json(res, status, body) {
   res.end(payload);
 }
 
-function send(res, status, body, contentType = "application/json; charset=utf-8") {
-  const payload = typeof body === "string" ? body : JSON.stringify(body);
+function send(res, status, body, contentType = "application/json; charset=utf-8", headers = {}) {
+  const payload = typeof body === "string" || Buffer.isBuffer(body) ? body : JSON.stringify(body);
   res.writeHead(status, {
     "content-type": contentType,
     "content-length": Buffer.byteLength(payload),
+    ...headers,
   });
   res.end(payload);
 }
@@ -629,6 +632,21 @@ export async function handleBffRequest(bff, req, url, body) {
     return { status: 200, body: await bff.postCommsPull(body) };
   }
 
+  // Slice 21 — the dad's full bundle (zip). Same gate. Records a receipt.
+  // There is NO delete route: delete is Nick-only (src/cli-dad.js).
+  if (method === "GET" && path === "/vault/export") {
+    const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
+    await gateDad(bff, req, dad_id);
+    const out = await bff.getVaultExportZip({ dad_id });
+    log("http.export", { dad: dad_id, bytes: out.bytes });
+    return {
+      status: 200,
+      body: out.zip,
+      contentType: "application/zip",
+      headers: { "content-disposition": `attachment; filename="dde-export-${out.exported_at.slice(0, 10)}.zip"` },
+    };
+  }
+
   if (method === "GET" && path === "/vault/export/verified") {
     const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
     await gateDad(bff, req, dad_id);
@@ -672,7 +690,7 @@ export function createServer(bff) {
       }
       const result = await runRequestScope(() => handleBffRequest(bff, req, url, body));
       const ct = result.contentType || "application/json; charset=utf-8";
-      send(res, result.status, result.body, ct);
+      send(res, result.status, result.body, ct, result.headers || {});
     } catch (err) {
       const status = Number(err?.status);
       const msg = String(err?.message || "bad request");
@@ -747,7 +765,10 @@ export async function main(argv = process.argv.slice(2)) {
     : await openTokenStore({
         jsonPath: process.env.DDE_TOKENS_PATH || defaultJsonPath(),
       });
-  const bff = makeBff(store.vault, { tokenStore });
+  const opsStore = usePostgres
+    ? await openOpsStore({ query: store.query })
+    : await openOpsStore({ jsonPath: defaultOpsPath() });
+  const bff = makeBff(store.vault, { tokenStore, opsStore });
   if (values.demo) {
     await seedDemo(bff, DEMO_DAD_ID);
   }
@@ -766,6 +787,7 @@ export async function main(argv = process.argv.slice(2)) {
   const shutdown = async () => {
     server.close();
     await tokenStore.close();
+    await opsStore.close();
     await store.close();
   };
   process.on("SIGINT", () => {
