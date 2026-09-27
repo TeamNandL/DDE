@@ -39,6 +39,7 @@
     <p class="next">Next: <span id="next">—</span></p>
     <label>Vent / intake<textarea id="text" placeholder="One pain → one Next"></textarea></label>
     <button type="button" id="btn_send">Send intake</button>
+    <p class="hint">Think someone else has your link or your device? <button type="button" id="btn_panic">Log out everywhere now</button> — every device, instantly. Ask Nick for a fresh link after.</p>
   </div>
 
   <p id="err" hidden></p>
@@ -174,6 +175,28 @@
     await loadState();
   }
 
+  // Panic: all-device logout. Kills every token this dad holds — this
+  // device included — then forgets the pasted creds. Same route as logout.
+  async function panic() {
+    showErr("");
+    const { dad_id, token } = getCreds();
+    if (!dad_id || !token) { showErr("Nothing to log out — no creds loaded."); return; }
+    const res = await fetch(BFF + "/vault/panic", {
+      method: "POST",
+      headers: { "content-type": "application/json", Authorization: "Bearer " + token },
+      body: JSON.stringify({ dad_id }),
+    });
+    $("dad_id").value = "";
+    $("token").value = "";
+    $("panel").hidden = true;
+    $("status").hidden = true;
+    if (!res.ok) {
+      showErr(res.status === 401 ? "That link was already dead. Ask Nick for a fresh one." : "HTTP " + res.status);
+      return;
+    }
+    showErr("Logged out everywhere. Every device is signed out. Ask Nick for a fresh link.");
+  }
+
   // Boot: hash-only for token. Reject ?token= query (do not use it).
   const rejectedQueryToken = queryHasToken();
   const p = parseHashCreds();
@@ -190,6 +213,7 @@
 
   $("btn_load").addEventListener("click", () => loadState().catch((e) => showErr(String(e))));
   $("btn_send").addEventListener("click", () => sendIntake().catch((e) => showErr(String(e))));
+  $("btn_panic").addEventListener("click", () => panic().catch((e) => showErr(String(e))));
   $("btn_clear").addEventListener("click", () => {
     $("dad_id").value = "";
     $("token").value = "";

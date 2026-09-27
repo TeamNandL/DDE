@@ -18,7 +18,7 @@ async function start() {
   const bff = makeBff(vault, { now: Date.parse("2026-09-27T16:00:00Z") });
   const server = createServer(bff);
   const addr = await listenServer(server, { host: "127.0.0.1", port: 0 });
-  return { base: `http://127.0.0.1:${addr.port}`, close: () => new Promise((r) => server.close(r)) };
+  return { bff, base: `http://127.0.0.1:${addr.port}`, close: () => new Promise((r) => server.close(r)) };
 }
 
 test("matrix covers every dad-scoped route in PHASE1_ROUTES (+ PATCH /vault/state)", () => {
@@ -35,7 +35,8 @@ test("auth matrix (memory): 401 none/bad · 403 cross-dad · 404 unknown · 200 
   try {
     const a = (await jsonReq(s.base, "POST", "/vault/provision", {})).data;
     const b = (await jsonReq(s.base, "POST", "/vault/provision", {})).data;
-    const rows = await authMatrix(s.base, a, b, randomUUID());
+    const mint = async (id) => (await s.bff.mintToken({ dad_id: id })).token;
+    const rows = await authMatrix(s.base, a, b, randomUUID(), mint);
     for (const r of rows) {
       assert.equal(r.none, 401, `${r.route} no token`);
       assert.equal(r.bad, 401, `${r.route} bad token`);
@@ -43,7 +44,7 @@ test("auth matrix (memory): 401 none/bad · 403 cross-dad · 404 unknown · 200 
       assert.equal(r.unknown, 404, `${r.route} unknown dad`);
       assert.equal(r.own, 200, `${r.route} own token: ${JSON.stringify(r.error)}`);
     }
-    assert.equal(rows.length, 41);
+    assert.equal(rows.length, 43);
   } finally {
     await s.close();
   }
