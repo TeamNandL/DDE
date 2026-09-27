@@ -337,3 +337,10 @@ Non-negotiable source rules for over-capture, keyword candidates, OFW
 cross-check, structured account facts, and proactive check-ins live in
 [`COURT_PREP_PRINCIPLES.md`](COURT_PREP_PRINCIPLES.md). Obey them; do not
 weaken in code or copy without Nick exact-yes.
+
+## Operating spine (Mamba principles)
+
+DDE product / Chip operating principles (process → craft, journey over
+result, learn from the greats, keep showing up) live in
+[`MAMBA_PRINCIPLES.md`](MAMBA_PRINCIPLES.md). Use that file — not the
+third-party “Bryant’s 10 Rules” poster list.
