@@ -17,6 +17,7 @@ export const COLD_ASK_SCHEMA_PATH = resolve(here, "../../vault/007_cold_ask.sql"
 export const DRAFTS_SCHEMA_PATH = resolve(here, "../../vault/008_drafts.sql");
 export const DRAFT_GRADE_SCHEMA_PATH = resolve(here, "../../vault/009_draft_grade.sql");
 export const COURT_PREP_SCHEMA_PATH = resolve(here, "../../vault/010_court_prep.sql");
+export const PARENTING_PLAN_SCHEMA_PATH = resolve(here, "../../vault/011_parenting_plan.sql");
 
 export function readPhase1SchemaSql() {
   return readFileSync(SCHEMA_PATH, "utf8");
@@ -137,6 +138,15 @@ export async function applyCourtPrepSchema(exec) {
   }
 }
 
+// Parenting Plan seat (Slice 14): plan_topics + plan_drafts.
+export async function applyParentingPlanSchema(exec) {
+  const sql = readFileSync(PARENTING_PLAN_SCHEMA_PATH, "utf8");
+  if (!sql.trim()) throw new Error("011_parenting_plan.sql is empty");
+  for (const stmt of splitSqlStatements(sql)) {
+    await exec(stmt);
+  }
+}
+
 /** Phase 1 tables + FTS + noticed + return + progress + cold-ask + drafts (+grade) + court-prep. */
 export async function applyVaultSchema(exec) {
   await applyPhase1Schema(exec);
@@ -148,4 +158,5 @@ export async function applyVaultSchema(exec) {
   await applyDraftsSchema(exec);
   await applyDraftGradeSchema(exec);
   await applyCourtPrepSchema(exec);
+  await applyParentingPlanSchema(exec);
 }
