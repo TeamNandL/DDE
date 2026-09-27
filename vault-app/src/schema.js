@@ -16,6 +16,7 @@ export const PROGRESS_SCHEMA_PATH = resolve(here, "../../vault/006_progress.sql"
 export const COLD_ASK_SCHEMA_PATH = resolve(here, "../../vault/007_cold_ask.sql");
 export const DRAFTS_SCHEMA_PATH = resolve(here, "../../vault/008_drafts.sql");
 export const DRAFT_GRADE_SCHEMA_PATH = resolve(here, "../../vault/009_draft_grade.sql");
+export const COURT_PREP_SCHEMA_PATH = resolve(here, "../../vault/010_court_prep.sql");
 
 export function readPhase1SchemaSql() {
   return readFileSync(SCHEMA_PATH, "utf8");
@@ -47,6 +48,10 @@ export function readDraftsSchemaSql() {
 
 export function readDraftGradeSchemaSql() {
   return readFileSync(DRAFT_GRADE_SCHEMA_PATH, "utf8");
+}
+
+export function readCourtPrepSchemaSql() {
+  return readFileSync(COURT_PREP_SCHEMA_PATH, "utf8");
 }
 
 // node-pg's extended protocol rejects multi-statement strings. The Phase 1
@@ -123,7 +128,16 @@ export async function applyDraftGradeSchema(exec) {
   }
 }
 
-/** Phase 1 tables + FTS + noticed + return + progress + cold-ask + drafts (+grade). */
+// Court-prep capture: candidate_facts + notifications (check-ins).
+export async function applyCourtPrepSchema(exec) {
+  const sql = readCourtPrepSchemaSql();
+  if (!sql.trim()) throw new Error("010_court_prep.sql is empty");
+  for (const stmt of splitSqlStatements(sql)) {
+    await exec(stmt);
+  }
+}
+
+/** Phase 1 tables + FTS + noticed + return + progress + cold-ask + drafts (+grade) + court-prep. */
 export async function applyVaultSchema(exec) {
   await applyPhase1Schema(exec);
   await applyFtsSchema(exec);
@@ -133,4 +147,5 @@ export async function applyVaultSchema(exec) {
   await applyColdAskSchema(exec);
   await applyDraftsSchema(exec);
   await applyDraftGradeSchema(exec);
+  await applyCourtPrepSchema(exec);
 }

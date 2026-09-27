@@ -42,6 +42,11 @@ export const PHASE1_ROUTES = [
   "GET /vault/state",
   "PUT /vault/state",
   "GET /vault/progress",
+  "GET /vault/candidates",
+  "POST /vault/candidates/review",
+  "GET /vault/notifications",
+  "POST /vault/checkins/ensure",
+  "POST /vault/notifications/mark",
   "GET /vault/chip_entry",
   "POST /vault/comms/cold",
   "POST /vault/comms/draft",
@@ -331,6 +336,66 @@ export async function handleBffRequest(bff, req, url, body) {
     return { status: 200, body: await bff.getVaultProgress({ dad_id }) };
   }
 
+  if (method === "GET" && path === "/vault/candidates") {
+    const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
+    await gateDad(bff, req, dad_id);
+    // Log hygiene: ids only — never quotes or lines.
+    log("http.candidates", { dad: dad_id });
+    const include_tossed = q.get("include_tossed") === "true";
+    return { status: 200, body: await bff.getVaultCandidates({ dad_id, include_tossed }) };
+  }
+
+  if (method === "POST" && path === "/vault/candidates/review") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    if (typeof body.id !== "string" || !UUID_RE.test(body.id)) {
+      const err = new Error("id must be a uuid");
+      err.status = 400;
+      throw err;
+    }
+    log("http.candidates.review", { dad: dad_id });
+    return {
+      status: 200,
+      body: await bff.postCandidateReview({ dad_id, id: body.id, review: body.review }),
+    };
+  }
+
+  if (method === "GET" && path === "/vault/notifications") {
+    const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
+    await gateDad(bff, req, dad_id);
+    log("http.notifications", { dad: dad_id });
+    return { status: 200, body: await bff.getVaultNotifications({ dad_id }) };
+  }
+
+  if (method === "POST" && path === "/vault/checkins/ensure") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    log("http.checkins.ensure", { dad: dad_id });
+    return {
+      status: 200,
+      body: await bff.postCheckinsEnsure({
+        dad_id,
+        date: body.date,
+        tz_offset_minutes: body.tz_offset_minutes,
+      }),
+    };
+  }
+
+  if (method === "POST" && path === "/vault/notifications/mark") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    if (typeof body.id !== "string" || !UUID_RE.test(body.id)) {
+      const err = new Error("id must be a uuid");
+      err.status = 400;
+      throw err;
+    }
+    log("http.notifications.mark", { dad: dad_id });
+    return {
+      status: 200,
+      body: await bff.postNotificationMark({ dad_id, id: body.id, status: body.status }),
+    };
+  }
+
   if (method === "POST" && path === "/vault/comms/cold") {
     const dad_id = requireDadId(body.dad_id);
     await gateDad(bff, req, dad_id);
@@ -355,7 +420,7 @@ export async function handleBffRequest(bff, req, url, body) {
     log("http.comms.draft", { dad: dad_id });
     return {
       status: 200,
-      body: await bff.postCommsDraft({ dad_id, body: body.body, kind: body.kind }),
+      body: await bff.postCommsDraft({ dad_id, body: body.body, kind: body.kind, on_record: body.on_record }),
     };
   }
 
