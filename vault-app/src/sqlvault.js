@@ -41,6 +41,9 @@ const TRANSLATION_COLS = `id, dad_id, created_at, input_kind, input_cold, term_k
 const TRANSLATOR_CAND_COLS = `id, dad_id, translation_id, created_at, label, date_text,
   to_char(on_date, 'YYYY-MM-DD') as on_date, visibility, status`;
 
+const INVOLVEMENT_COLS = `dad_id, kid_key, field_key, position, value,
+  to_char(asked_on, 'YYYY-MM-DD') as asked_on, asked_via, outcome, source, claim_status, updated_at`;
+
 const PLAN_TOPIC_COLS = `dad_id, topic_key, position, status, choice, detail, stance, depth,
   example_shown, updated_at`;
 
@@ -462,6 +465,55 @@ export class SqlVault {
           where dad_id = ${lit(dadId)} order by created_at desc, id desc limit ${Number(limit)};`,
       )) ?? []
     );
+  }
+
+  // ---- involvement cheat sheet (vault/013_involvement.sql) ----------------
+
+  async ensureInvolvement(dadId, kidKey, fields) {
+    let created = 0;
+    for (const { key, position } of fields) {
+      const rows = await this.exec(
+        `insert into involvement_fields (dad_id, kid_key, field_key, position)
+         values (${lit(dadId)}, ${lit(kidKey)}, ${lit(key)}, ${Number(position)})
+         on conflict (dad_id, kid_key, field_key) do nothing
+         returning field_key;`,
+      );
+      created += rows?.length ?? 0;
+    }
+    return created;
+  }
+
+  async listInvolvementKids(dadId) {
+    const rows =
+      (await this.exec(
+        `select distinct kid_key from involvement_fields where dad_id = ${lit(dadId)} order by kid_key;`,
+      )) ?? [];
+    return rows.map((r) => r.kid_key);
+  }
+
+  async listInvolvement(dadId, kidKey) {
+    return (
+      (await this.exec(
+        `select ${INVOLVEMENT_COLS} from involvement_fields
+          where dad_id = ${lit(dadId)} and kid_key = ${lit(kidKey)} order by position;`,
+      )) ?? []
+    );
+  }
+
+  async updateInvolvementField(dadId, kidKey, key, patch) {
+    const sets = [];
+    for (const col of ["value", "asked_via", "outcome"]) {
+      if (col in patch) sets.push(`${col} = ${lit(patch[col])}`);
+    }
+    if ("asked_on" in patch) sets.push(`asked_on = ${patch.asked_on ? `${lit(patch.asked_on)}::date` : "null"}`);
+    sets.push("updated_at = now()");
+    const rows = await this.exec(
+      `update involvement_fields set ${sets.join(", ")}
+        where dad_id = ${lit(dadId)} and kid_key = ${lit(kidKey)} and field_key = ${lit(key)}
+        returning ${INVOLVEMENT_COLS};`,
+    );
+    log("involvement.update", { table: "involvement_fields", dad: dadId, field: key });
+    return rows?.[0] ?? null;
   }
 
   async listEvents(dadId) {

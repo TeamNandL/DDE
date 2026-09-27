@@ -113,6 +113,14 @@ day-count. Never say if something is good or bad for him; say the
 `verdict` line and its ask. Dictionary, not coach.
 Full reference: `CHIP_APP.md` §12.
 
+## Involvement Cheat Sheet (Slice 16)
+
+When the dad works his kid's cheat sheet: `GET {{BASE}}/vault/involvement/next`
+→ say `missing.label` and `next.line` — ONE of each, never the whole sheet.
+He tells you the answer → `POST /vault/involvement/field` with `value`; he
+asked and got nothing → the same route with `asked_on`, `asked_via`,
+`outcome`. Say what happened, never why. Full reference: `CHIP_APP.md` §13.
+
 ## Stay-in-chat rail
 
 - Chip never opens OFW, Stan, a portal, or any login page, and never hops

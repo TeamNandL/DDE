@@ -53,6 +53,11 @@ export const PHASE1_ROUTES = [
   "POST /vault/translate/explain",
   "GET /vault/translate/last",
   "GET /vault/translate/list",
+  "POST /vault/involvement/ensure",
+  "GET /vault/involvement",
+  "POST /vault/involvement/field",
+  "GET /vault/involvement/next",
+  "GET /vault/involvement/export",
   "POST /vault/candidates/review",
   "GET /vault/notifications",
   "POST /vault/checkins/ensure",
@@ -401,6 +406,52 @@ export async function handleBffRequest(bff, req, url, body) {
     await gateDad(bff, req, dad_id);
     log("http.plan.draft", { dad: dad_id });
     return { status: 200, body: await bff.getPlanDraft({ dad_id, kind: q.get("kind") || "full" }) };
+  }
+
+  // Involvement Cheat Sheet (Slice 16). Log hygiene: ids only — never kid
+  // labels or values.
+  if (method === "POST" && path === "/vault/involvement/ensure") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    log("http.involvement.ensure", { dad: dad_id });
+    return { status: 200, body: await bff.postInvolvementEnsure({ dad_id, kid: body.kid }) };
+  }
+
+  if (method === "POST" && path === "/vault/involvement/field") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    log("http.involvement.field", { dad: dad_id });
+    return {
+      status: 200,
+      body: await bff.postInvolvementField({
+        dad_id,
+        kid: body.kid,
+        field: body.field,
+        value: body.value,
+        asked_on: body.asked_on,
+        asked_via: body.asked_via,
+        outcome: body.outcome,
+      }),
+    };
+  }
+
+  if (
+    method === "GET" &&
+    (path === "/vault/involvement" || path === "/vault/involvement/next" || path === "/vault/involvement/export")
+  ) {
+    const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
+    await gateDad(bff, req, dad_id);
+    const kid = q.get("kid") || undefined;
+    if (path === "/vault/involvement/next") {
+      log("http.involvement.next", { dad: dad_id });
+      return { status: 200, body: await bff.getInvolvementNext({ dad_id, kid }) };
+    }
+    if (path === "/vault/involvement/export") {
+      log("http.involvement.export", { dad: dad_id });
+      return { status: 200, body: await bff.getInvolvementExport({ dad_id, kid }) };
+    }
+    log("http.involvement.list", { dad: dad_id });
+    return { status: 200, body: await bff.getInvolvement({ dad_id, kid }) };
   }
 
   // Process Translator (Slice 15). Log hygiene: ids only — never the paste.

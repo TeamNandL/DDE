@@ -37,6 +37,17 @@ import {
   topicDef,
   topicPrompt,
 } from "./plan.js";
+import {
+  CLAIM_FOOTER as INVOLVEMENT_FOOTER,
+  FIELDS as INVOLVEMENT_FIELDS,
+  MAX_KIDS,
+  checkFieldUpdate,
+  checkKid,
+  fieldDef as involvementFieldDef,
+  fieldStatus,
+  missingNext,
+  renderOnePager,
+} from "./involvement.js";
 import { LAWYER_LINE as TRANSLATOR_LAWYER_LINE, explain as translatorExplain } from "./translator.js";
 
 function unknownDad() {
@@ -238,6 +249,57 @@ export function makeBff(vault, opts = {}) {
   function planNext(rows, depth = "simple") {
     const key = nextTopic(rows);
     return key ? topicPrompt(key, depth) : null;
+  }
+
+  // ---- Involvement Cheat Sheet helpers (Slice 16) ---------------------------
+  function todayIso() {
+    return new Date(opts.now ?? Date.now()).toISOString().slice(0, 10);
+  }
+
+  async function involvementRows(dad_id, kid) {
+    const kids = await vault.listInvolvementKids(dad_id);
+    if (!kids.includes(kid) && kids.length >= MAX_KIDS) {
+      throw Object.assign(new Error(`at most ${MAX_KIDS} kids`), { status: 400 });
+    }
+    const created = await vault.ensureInvolvement(
+      dad_id,
+      kid,
+      INVOLVEMENT_FIELDS.map((f, i) => ({ key: f.key, position: i + 1 })),
+    );
+    return { created, rows: await vault.listInvolvement(dad_id, kid) };
+  }
+
+  function involvementView(r) {
+    return {
+      field: r.field_key,
+      label: involvementFieldDef(r.field_key).label,
+      status: fieldStatus(r),
+      value: r.value ?? null,
+      asked_on: r.asked_on ?? null,
+      asked_via: r.asked_via ?? null,
+      outcome: r.outcome ?? null,
+      claim: true,
+      verified: false,
+    };
+  }
+
+  function involvementCounts(rows) {
+    const c = { filled: 0, asked: 0, blank: 0 };
+    for (const r of rows) c[fieldStatus(r)] += 1;
+    return c;
+  }
+
+  // One Missing + one Next: the requested kid, else the first kid (by key)
+  // with anything left, else the first kid.
+  async function involvementSpeak(dad_id, kid) {
+    const kids = kid ? [kid] : await vault.listInvolvementKids(dad_id);
+    let first = null;
+    for (const k of kids) {
+      const mn = missingNext(await vault.listInvolvement(dad_id, k), todayIso());
+      first ??= mn;
+      if (mn.missing) return mn;
+    }
+    return first ?? { missing: null, next: { job: "re_engagement", line: "Add a kid to start the cheat sheet." }, left: 0 };
   }
 
   // Process Translator view: the stored, cold result + private candidates.
@@ -702,6 +764,81 @@ export function makeBff(vault, opts = {}) {
       await requireDad(dad_id);
       const n = Math.max(1, Math.min(50, Number(limit) || 20));
       return { items: await vault.listTranslations(dad_id, n), lawyer_line: TRANSLATOR_LAWYER_LINE };
+    },
+
+    // ---- Involvement Cheat Sheet (Slice 16) ---------------------------------
+    // Living one-pager per kid. Dad-entered claims only (never verified).
+    // Speaks ONE Missing + ONE Next. Writes involvement_fields only — never
+    // OFW, intake, Coach, plan, or translator rows. Logs: ids + field keys.
+
+    // POST /vault/involvement/ensure {dad_id, kid}
+    async postInvolvementEnsure({ dad_id, kid }) {
+      await requireDad(dad_id);
+      checkKid(kid);
+      const { created, rows } = await involvementRows(dad_id, kid);
+      log("involvement.ensure", { dad: dad_id, created });
+      return {
+        kid,
+        created,
+        counts: involvementCounts(rows),
+        speak: missingNext(rows, todayIso()),
+        claim_footer: INVOLVEMENT_FOOTER,
+      };
+    },
+
+    // GET /vault/involvement {dad_id, kid?} -> {kids:[{kid, fields, counts}], speak}
+    // The full sheet is for display; Chip says `speak` only.
+    async getInvolvement({ dad_id, kid }) {
+      await requireDad(dad_id);
+      if (kid) checkKid(kid);
+      const keys = kid ? [kid] : await vault.listInvolvementKids(dad_id);
+      const kids = [];
+      for (const k of keys) {
+        const rows = await vault.listInvolvement(dad_id, k);
+        if (rows.length) kids.push({ kid: k, fields: rows.map(involvementView), counts: involvementCounts(rows) });
+      }
+      if (kid && kids.length === 0) throw Object.assign(new Error("no sheet for that kid — ensure first"), { status: 404 });
+      return { kids, speak: await involvementSpeak(dad_id, kid), claim_footer: INVOLVEMENT_FOOTER };
+    },
+
+    // POST /vault/involvement/field {dad_id, kid, field, value | asked_on+asked_via+outcome}
+    async postInvolvementField({ dad_id, kid, field, value, asked_on, asked_via, outcome }) {
+      await requireDad(dad_id);
+      checkKid(kid);
+      const u = checkFieldUpdate({ field, value, asked_on, asked_via, outcome });
+      await involvementRows(dad_id, kid);
+      const rec = await vault.updateInvolvementField(dad_id, kid, u.field, u.patch);
+      const rows = await vault.listInvolvement(dad_id, kid);
+      log("involvement.field", { dad: dad_id, field: u.field, kind: "value" in u.patch ? "value" : "ask" });
+      return {
+        field: involvementView(rec),
+        speak: missingNext(rows, todayIso()),
+        claim_footer: INVOLVEMENT_FOOTER,
+      };
+    },
+
+    // GET /vault/involvement/next {dad_id, kid?} -> {missing, next, left}
+    async getInvolvementNext({ dad_id, kid }) {
+      await requireDad(dad_id);
+      if (kid) checkKid(kid);
+      return { ...(await involvementSpeak(dad_id, kid)), claim_footer: INVOLVEMENT_FOOTER };
+    },
+
+    // GET /vault/involvement/export {dad_id, kid} -> one-pager text
+    async getInvolvementExport({ dad_id, kid }) {
+      await requireDad(dad_id);
+      checkKid(kid);
+      const rows = await vault.listInvolvement(dad_id, kid);
+      if (!rows.length) throw Object.assign(new Error("no sheet for that kid — ensure first"), { status: 404 });
+      log("involvement.export", { dad: dad_id });
+      return {
+        kid,
+        as_of: todayIso(),
+        body: renderOnePager(kid, rows, todayIso()),
+        claim: true,
+        verified: false,
+        claim_footer: INVOLVEMENT_FOOTER,
+      };
     },
 
     // GET /vault/chip_entry {dad_id}
