@@ -252,7 +252,21 @@ POST /vault/comms/draft
         "mode": "document" | "de_escalate",
         "say": "Not sent. Next: …" }
 → 200 { "written": 0 }        // harm heard, or nothing survived the strips
+→ 200 { "written": 0, "rewritten": false, "say": "<plain line>" }   // hot vent, no clean message possible
 → 400 empty body / unknown kind
+```
+
+**Hot vent (Slice 19).** When the body has heat — swearing, diagnosing
+the other parent (narcissist / alienating / motive), or "tell her off" —
+the draft is **rebuilt**, never strip-and-kept: the real issue (behavior
+only) + the dad's real ask (or the issue's default ask) + "Thank you.",
+returned with `rewritten: true`. If that can't be done cleanly and
+completely, there is **no body** — Chip says the `say` line only and
+never repeats the vent. Example: the Round Two vent becomes "My weekend
+parenting time was cancelled again. Please let me know when we can
+schedule the make-up time. Thank you."
+
+```
 
 GET /vault/comms/drafts?dad_id=<uuid>
 → 200 [ { "draft_id", "body", "kind", "created_at" } ]   // drafts ONLY

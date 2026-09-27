@@ -58,6 +58,7 @@ import {
   nextStep as legalNextStep,
   renderPacket as legalRenderPacket,
 } from "./legalintake.js";
+import { FAILSAFE_SAY, calmRewrite, hasHeat } from "./calmdraft.js";
 import { LAWYER_LINE as TRANSLATOR_LAWYER_LINE, explain as translatorExplain } from "./translator.js";
 
 function unknownDad() {
@@ -1172,8 +1173,24 @@ export function makeBff(vault, opts = {}) {
         return { written: 0 };
       }
       const piiClean = stripPii(body).text;
-      const venomStripped = hasVenom(piiClean);
-      const cold = stripVenom(piiClean).trim();
+      // Slice 19 — heat (swearing, diagnosing the other parent, "tell her
+      // off"): never strip-and-keep (that returned hot fragments). Build a
+      // complete calm draft from the real issue + real ask, or fail safe:
+      // no body, nothing stored, a plain say — the vent is never echoed.
+      const rewritten = hasHeat(piiClean);
+      let cold;
+      let venomStripped = false;
+      if (rewritten) {
+        const r = calmRewrite(piiClean);
+        if (!r.ok) {
+          log("comms.draft.failsafe", { dad: dad_id });
+          return { written: 0, rewritten: false, say: FAILSAFE_SAY };
+        }
+        cold = r.body;
+      } else {
+        venomStripped = hasVenom(piiClean);
+        cold = stripVenom(piiClean).trim();
+      }
       if (!cold) {
         // Nothing storable survived the strips (pure venom) — no row.
         return { written: 0 };
@@ -1194,8 +1211,10 @@ export function makeBff(vault, opts = {}) {
       // ON THE RECORD forces document mode even when the wording heuristic
       // misses it. on_record:false never downgrades a detected record ask.
       const mode = on_record === true ? "document" : draftMode(cold);
-      log("comms.draft", { dad: dad_id, id: rec.id, kind: kind ?? "none", grade: soft_grade, mode });
-      return { written: 1, draft_id: rec.id, body: cold, soft_grade, mode, say: draftSayLine(mode) };
+      log("comms.draft", { dad: dad_id, id: rec.id, kind: kind ?? "none", grade: soft_grade, mode, rewritten: rewritten ? 1 : 0 });
+      const out = { written: 1, draft_id: rec.id, body: cold, soft_grade, mode, say: draftSayLine(mode) };
+      if (rewritten) out.rewritten = true;
+      return out;
     },
 
     // GET /vault/comms/drafts {dad_id} -> [{draft_id, body, kind, created_at}]
