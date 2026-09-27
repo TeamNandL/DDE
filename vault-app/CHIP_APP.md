@@ -436,6 +436,15 @@ counsel channel. Not Coach, not Quill, not Parenting Plan (§11).
 `Authorization: Bearer <token>` (preferred) or `X-DDE-Token: <token>`.
 Zero extra auth theater — no OAuth, no login page, no MFA on this slice.
 
+Auth matrix (Slice 18, every dad-scoped route): unknown dad → `404` ·
+no or bad token → `401` · another dad's token → `403` · own token → the
+route runs. After the gate, every database statement for that request runs
+as the non-owner role `dde_app` bound to that dad, and Postgres row-level
+security (`vault/015_auth_rls.sql`) limits reads and writes to his rows.
+Chip only ever holds a dad's bearer token — never a database credential.
+`POST /vault/provision` stays the only mint path; synthetic dads only until
+the real-dad gate is opened by Nick.
+
 ## Chip deep-link entry (minimal HTML)
 
 Same origin as BFF:

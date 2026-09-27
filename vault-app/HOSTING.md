@@ -53,3 +53,26 @@ Pass `-e DATABASE_URL="$DATABASE_URL"` from your shell. Never bake the URL into 
 `GET /app` and `GET /chip/entry` serve the same minimal Chip HTML (see `CHIP_APP.md`).
 
 **LIVE BFF note:** `https://dde-vault-bff-production.up.railway.app` may lag tip until the next deploy — tip/localhost is the source of truth for this slice.
+
+## Auth + RLS (Slice 18)
+
+Boot applies `vault/015_auth_rls.sql` after 001–014. It creates the
+`dde_app` role (NOLOGIN) and grants it to the connecting user, so the
+`DATABASE_URL` user must be the table owner **and** able to create roles
+(the default `postgres` user on Railway / Fly / Render Postgres is). If
+boot fails with `permission denied to create role`, create it once by hand:
+
+    create role dde_app nologin;
+    grant dde_app to <DATABASE_URL user>;
+
+Then redeploy. No new env vars, no Supabase, no paid add-on. The
+`DATABASE_URL` user is the service role: it stays in host env only and is
+never given to Chip.
+
+Proof on any Postgres (zero skips required):
+
+    cd vault-app && DATABASE_URL=... npm test
+    DATABASE_URL=... node --test test/auth-rls.pg.test.js
+
+Real dads stay closed: provision synthetic dads only until the Razor gate
+passes and Nick gives an exact yes.

@@ -20,6 +20,7 @@ import { databaseUrl, openStore } from "./store.js";
 import { defaultJsonPath, openTokenStore } from "./tokens.js";
 import { DEMO_DAD_ID, seedDemo } from "./demo.js";
 import { log } from "./logger.js";
+import { bindDad, runRequestScope } from "./scope.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CHIP_ENTRY_HTML = readFileSync(resolve(__dirname, "../public/chip-entry.html"), "utf8");
@@ -156,6 +157,9 @@ export function extractToken(req) {
  * Order: dad exists → 404 unknown dad; then token → 401/403.
  * (Unprovisioned curls without a token must still get 404, not 401.)
  */
+// Auth matrix (Slice 18): unknown dad → 404 · no / bad token → 401 ·
+// token for another dad → 403 · own token → the route runs, and every SQL
+// statement after this point runs as dde_app bound to this dad (RLS).
 async function gateDad(bff, req, dad_id) {
   const state = await bff.getVaultState({ dad_id });
   if (!state) {
@@ -164,6 +168,7 @@ async function gateDad(bff, req, dad_id) {
     throw err;
   }
   await bff.checkToken(dad_id, extractToken(req));
+  bindDad(dad_id);
 }
 
 export async function handleBffRequest(bff, req, url, body) {
@@ -651,7 +656,7 @@ export function createServer(bff) {
       if (req.method !== "GET" && req.method !== "HEAD") {
         body = await readBody(req);
       }
-      const result = await handleBffRequest(bff, req, url, body);
+      const result = await runRequestScope(() => handleBffRequest(bff, req, url, body));
       const ct = result.contentType || "application/json; charset=utf-8";
       send(res, result.status, result.body, ct);
     } catch (err) {

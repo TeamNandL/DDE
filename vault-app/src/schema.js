@@ -21,6 +21,7 @@ export const PARENTING_PLAN_SCHEMA_PATH = resolve(here, "../../vault/011_parenti
 export const PROCESS_TRANSLATOR_SCHEMA_PATH = resolve(here, "../../vault/012_process_translator.sql");
 export const INVOLVEMENT_SCHEMA_PATH = resolve(here, "../../vault/013_involvement.sql");
 export const LEGAL_INTAKE_SCHEMA_PATH = resolve(here, "../../vault/014_legal_intake.sql");
+export const AUTH_RLS_SCHEMA_PATH = resolve(here, "../../vault/015_auth_rls.sql");
 
 export function readPhase1SchemaSql() {
   return readFileSync(SCHEMA_PATH, "utf8");
@@ -177,6 +178,14 @@ export async function applyLegalIntakeSchema(exec) {
   }
 }
 
+// Auth + RLS (Slice 18): dde_app role + dad_id policies. Run as ONE script
+// (DO blocks contain semicolons, so it is not statement-split).
+export async function applyAuthRlsSchema(exec) {
+  const sql = readFileSync(AUTH_RLS_SCHEMA_PATH, "utf8");
+  if (!sql.trim()) throw new Error("015_auth_rls.sql is empty");
+  await exec(sql);
+}
+
 /** Phase 1 tables + FTS + noticed + return + progress + cold-ask + drafts (+grade) + court-prep. */
 export async function applyVaultSchema(exec) {
   await applyPhase1Schema(exec);
@@ -192,4 +201,5 @@ export async function applyVaultSchema(exec) {
   await applyProcessTranslatorSchema(exec);
   await applyInvolvementSchema(exec);
   await applyLegalIntakeSchema(exec);
+  await applyAuthRlsSchema(exec);
 }
