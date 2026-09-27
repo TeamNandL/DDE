@@ -19,6 +19,7 @@ export const DRAFT_GRADE_SCHEMA_PATH = resolve(here, "../../vault/009_draft_grad
 export const COURT_PREP_SCHEMA_PATH = resolve(here, "../../vault/010_court_prep.sql");
 export const PARENTING_PLAN_SCHEMA_PATH = resolve(here, "../../vault/011_parenting_plan.sql");
 export const PROCESS_TRANSLATOR_SCHEMA_PATH = resolve(here, "../../vault/012_process_translator.sql");
+export const INVOLVEMENT_SCHEMA_PATH = resolve(here, "../../vault/013_involvement.sql");
 
 export function readPhase1SchemaSql() {
   return readFileSync(SCHEMA_PATH, "utf8");
@@ -157,6 +158,15 @@ export async function applyProcessTranslatorSchema(exec) {
   }
 }
 
+// Involvement Cheat Sheet (Slice 16): involvement_fields.
+export async function applyInvolvementSchema(exec) {
+  const sql = readFileSync(INVOLVEMENT_SCHEMA_PATH, "utf8");
+  if (!sql.trim()) throw new Error("013_involvement.sql is empty");
+  for (const stmt of splitSqlStatements(sql)) {
+    await exec(stmt);
+  }
+}
+
 /** Phase 1 tables + FTS + noticed + return + progress + cold-ask + drafts (+grade) + court-prep. */
 export async function applyVaultSchema(exec) {
   await applyPhase1Schema(exec);
@@ -170,4 +180,5 @@ export async function applyVaultSchema(exec) {
   await applyCourtPrepSchema(exec);
   await applyParentingPlanSchema(exec);
   await applyProcessTranslatorSchema(exec);
+  await applyInvolvementSchema(exec);
 }

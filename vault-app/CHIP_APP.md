@@ -388,6 +388,28 @@ explains lawyer-relationship basics (billing, updates, what to raise) —
 never "replace your lawyer". Not Coach, not Quill, not Parenting Plan
 (§11), not Legal Intake, no OFW case dates. MAP: deferred.
 
+### 13) Involvement Cheat Sheet — Slice 16 (pointer)
+
+**Living one-pager per kid. Say ONE Missing + ONE Next — never the whole
+sheet.** `kid` is a short label (lowercase slug), never a full name.
+
+| Route | Does |
+|---|---|
+| `POST /vault/involvement/ensure {dad_id, kid}` | the finite sheet for that kid |
+| `GET /vault/involvement?dad_id[&kid]` | fields (display) + `speak` {missing, next} |
+| `POST /vault/involvement/field {dad_id, kid, field, value}` | dad-entered value (claim) |
+| `POST /vault/involvement/field {dad_id, kid, field, asked_on, asked_via, outcome}` | he asked, didn't get it |
+| `GET /vault/involvement/next?dad_id[&kid]` | the one Missing + one Next |
+| `GET /vault/involvement/export?dad_id&kid` | one-pager text + claim footer |
+
+Fields: `grade`, `teacher`, `activities`, `friends`, `doctor`, `dentist`,
+`allergies`, `meds`, `therapist`, `emergency_contact_known` (yes|no).
+Jobs: deposition armor · asked-for blanks become a documentable pattern
+("asked the school on 2026-09-10; no answer as of …") — behavior only,
+never why · re-engagement (ask the school or provider directly). Values
+are claims, never verified; no SSNs, no money. Not Stan/OFW, not
+Parenting Plan (§11), not Process Translator (§12), not Coach, not Quill.
+
 ### Auth header
 
 `Authorization: Bearer <token>` (preferred) or `X-DDE-Token: <token>`.

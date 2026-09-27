@@ -81,6 +81,7 @@ export class Vault {
     this.plan_drafts = []; // bot-owned versioned drafts
     this.translations = []; // process translator (Slice 15)
     this.translator_calendar_candidates = []; // private_only, claim ≠ verified
+    this.involvement_fields = []; // involvement cheat sheet (Slice 16)
   }
 
   insertEvent(dadId, row) {
@@ -531,6 +532,53 @@ export class Vault {
         verdict_request: t.verdict_request,
         clock_flag: t.clock_flag,
       }));
+  }
+
+  // ---- involvement cheat sheet (vault/013_involvement.sql twin) -------------
+
+  ensureInvolvement(dadId, kidKey, fields) {
+    let created = 0;
+    for (const { key, position } of fields) {
+      if (this.involvement_fields.some((r) => r.dad_id === dadId && r.kid_key === kidKey && r.field_key === key)) {
+        continue;
+      }
+      this.involvement_fields.push({
+        dad_id: dadId,
+        kid_key: kidKey,
+        field_key: key,
+        position,
+        value: null,
+        asked_on: null,
+        asked_via: null,
+        outcome: null,
+        source: "dad_entered",
+        claim_status: "claim",
+        updated_at: new Date().toISOString(),
+      });
+      created += 1;
+    }
+    return created;
+  }
+
+  listInvolvementKids(dadId) {
+    return [...new Set(this.involvement_fields.filter((r) => r.dad_id === dadId).map((r) => r.kid_key))].sort();
+  }
+
+  listInvolvement(dadId, kidKey) {
+    return this.involvement_fields
+      .filter((r) => r.dad_id === dadId && r.kid_key === kidKey)
+      .slice()
+      .sort((a, b) => a.position - b.position);
+  }
+
+  updateInvolvementField(dadId, kidKey, key, patch) {
+    const rec = this.involvement_fields.find(
+      (r) => r.dad_id === dadId && r.kid_key === kidKey && r.field_key === key,
+    );
+    if (!rec) return null;
+    Object.assign(rec, patch, { updated_at: new Date().toISOString() });
+    log("involvement.update", { table: "involvement_fields", dad: dadId, field: key });
+    return rec;
   }
 
   // Read helpers used by spreadsheet views (same names as SqlVault).
