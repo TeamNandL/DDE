@@ -49,3 +49,8 @@ unread items with due window and status.
 - Chip vault contract: [`CHIP_APP.md`](CHIP_APP.md)
 - OFW / verified export lane stays separate; conversation candidates never
   merge into verified rows without an explicit human-supervised promote.
+
+## Operating spine
+
+Product mindset for DDE seats and court-prep work: see
+[`MAMBA_PRINCIPLES.md`](MAMBA_PRINCIPLES.md).
