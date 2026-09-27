@@ -176,8 +176,9 @@ test("PG auth matrix through RLS: every route 401 none/bad · 403 cross · 404 u
   try {
     const a = (await jsonReq(base, "POST", "/vault/provision", {})).data;
     const b = (await jsonReq(base, "POST", "/vault/provision", {})).data;
-    const rows = await authMatrix(base, a, b, randomUUID());
-    assert.equal(rows.length, 40);
+    const mint = async (id) => (await bff.mintToken({ dad_id: id })).token;
+    const rows = await authMatrix(base, a, b, randomUUID(), mint);
+    assert.equal(rows.length, 42);
     for (const r of rows) {
       assert.deepEqual(
         [r.none, r.bad, r.cross, r.unknown, r.own],

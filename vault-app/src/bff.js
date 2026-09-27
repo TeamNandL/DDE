@@ -17,7 +17,7 @@ import { extract, harmCheck, hasVenom, stripVenom } from "./extract.js";
 import { log } from "./logger.js";
 import { stripPii } from "./pii.js";
 import { clampProgressPatch, progressChipLine, progressLine, softGrade } from "./progress.js";
-import { createMemoryTokenStore, hashToken } from "./tokens.js";
+import { createMemoryTokenStore, hashToken, isTokenExpired, shouldTouch, tokenTtlMs } from "./tokens.js";
 import { parseSearchOpts } from "./search.js";
 import {
   candidateFacts,
@@ -175,6 +175,7 @@ export function tellFeedback(nextAction) {
  */
 export function makeBff(vault, opts = {}) {
   const tokenStore = opts.tokenStore || createMemoryTokenStore();
+  const ttlMs = opts.tokenTtlMs ?? tokenTtlMs();
 
   async function requireDad(dad_id) {
     const state = await vault.getState(dad_id);
@@ -424,7 +425,10 @@ export function makeBff(vault, opts = {}) {
 
     /**
      * Verify opaque provision token for dad_id against durable store.
-     * missing/unknown token → 401; token belongs to another dad → 403.
+     * missing/unknown/revoked token → 401; idle past the TTL → 401 "token
+     * expired" (and the row is revoked on the spot, so the death survives a
+     * rollback); token belongs to another dad → 403. An accepted token has
+     * its last_seen_at slid forward (throttled) — 30 days of INACTIVITY.
      */
     async checkToken(dad_id, token) {
       if (typeof token !== "string" || !token.trim()) {
@@ -432,7 +436,8 @@ export function makeBff(vault, opts = {}) {
         err.status = 401;
         throw err;
       }
-      const row = await tokenStore.lookupActive(hashToken(token.trim()));
+      const token_hash = hashToken(token.trim());
+      const row = await tokenStore.lookupActive(token_hash);
       if (!row) {
         const err = new Error("unauthorized");
         err.status = 401;
@@ -443,7 +448,65 @@ export function makeBff(vault, opts = {}) {
         err.status = 403;
         throw err;
       }
+      const nowMs = opts.now ?? Date.now();
+      if (isTokenExpired(row, nowMs, ttlMs)) {
+        await tokenStore.revoke(token_hash);
+        log("token.expired", { dad: dad_id });
+        const err = new Error("token expired");
+        err.status = 401;
+        throw err;
+      }
+      if (shouldTouch(row, nowMs)) {
+        await tokenStore.touch(token_hash, new Date(nowMs).toISOString());
+      }
       return true;
+    },
+
+    // — Token lifecycle (Slice 20). Callers are already past the bearer gate.
+    // POST /vault/logout {dad_id} (also POST /vault/panic) ->
+    // {logged_out: true, revoked: n}. ALL-DEVICE: every token this dad holds
+    // dies now, the caller's included. Threat model: a device left at the
+    // other house — single-device logout would leave that one alive.
+    async postVaultLogout({ dad_id }) {
+      await requireDad(dad_id);
+      const revoked = await tokenStore.revokeAllForDad(dad_id);
+      log("token.logout_all", { dad: dad_id, revoked });
+      return { logged_out: true, revoked };
+    },
+
+    // Operator only (Nick, CLI) — never an HTTP route. Kills every token
+    // for the dad. Vault data untouched.
+    async revokeDad({ dad_id }) {
+      await requireDad(dad_id);
+      const revoked = await tokenStore.revokeAllForDad(dad_id);
+      log("token.revoke", { dad: dad_id, revoked });
+      return { revoked };
+    },
+
+    // Operator only (CLI / tests) — never an HTTP route. Mints one more
+    // token for an existing dad. Raw token returned once; hash stored.
+    async mintToken({ dad_id }) {
+      await requireDad(dad_id);
+      const token = `dde-stub-${randomUUID()}`;
+      const at = new Date(opts.now ?? Date.now()).toISOString();
+      await tokenStore.insert({
+        dad_id,
+        token_hash: hashToken(token),
+        created_at: at,
+        last_seen_at: at,
+      });
+      log("token.mint", { dad: dad_id });
+      return { dad_id, token };
+    },
+
+    // Operator only — revoke every token for the dad, then mint a fresh one
+    // (lost phone, leaked link, idle-expired link).
+    async reissueToken({ dad_id }) {
+      await requireDad(dad_id);
+      const revoked = await tokenStore.revokeAllForDad(dad_id);
+      const out = await this.mintToken({ dad_id });
+      log("token.reissue", { dad: dad_id, revoked });
+      return { ...out, revoked };
     },
 
     // POST /vault/intake {dad_id, text, make_notice?} -> {written, chase}
@@ -1087,12 +1150,7 @@ export function makeBff(vault, opts = {}) {
     async postVaultProvision({ dad_id } = {}) {
       const id = dad_id || randomUUID();
       await vault.provisionState(id);
-      const token = `dde-stub-${randomUUID()}`;
-      await tokenStore.insert({
-        dad_id: id,
-        token_hash: hashToken(token),
-        created_at: new Date().toISOString(),
-      });
+      const { token } = await this.mintToken({ dad_id: id });
       const seeded = await this.postMissingSeed({ dad_id: id });
       log("provision", { dad: id, seeded: seeded.written });
       return {

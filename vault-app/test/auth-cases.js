@@ -47,7 +47,11 @@ export function routeCases(dad_id, ctx = {}) {
     ["POST", "/vault/comms/pull", { dad_id, channel: "ofw", source_ref: "ofw:alex:1", body_cold: "Pickup confirmed.", sent_at: "2026-09-20T17:00:00Z" }],
     ["GET", q("/vault/export/verified")],
     ["GET", q("/vault/search", "&q=pickup")],
-  ].map(([method, path, body, after]) => ({ method, path, body, after }));
+    // Slice 20 — these kill every token for the dad, so they run last and
+    // each on a freshly minted token.
+    ["POST", "/vault/logout", { dad_id }, undefined, true],
+    ["POST", "/vault/panic", { dad_id }, undefined, true],
+  ].map(([method, path, body, after, consumes = false]) => ({ method, path, body, after, consumes }));
 }
 
 export async function jsonReq(base, method, path, body, { token } = {}) {
@@ -74,21 +78,23 @@ export function retarget(c, other) {
 /**
  * Runs the full auth matrix for every dad-scoped route.
  * a, b: provisioned dads {dad_id, token}; unknown: an unprovisioned uuid.
+ * mint(dad_id) → a fresh raw token, used by token-killing routes (Slice 20).
  * Returns rows [{route, own, none, bad, cross, unknown}].
  */
-export async function authMatrix(base, a, b, unknown) {
+export async function authMatrix(base, a, b, unknown, mint) {
   const ctx = {};
   const rows = [];
   for (const c of routeCases(a.dad_id, ctx)) {
     const body = typeof c.body === "function" ? c.body() : c.body;
     const route = `${c.method} ${c.path.split("?")[0]}`;
+    const token = c.consumes ? await mint(a.dad_id) : a.token;
     const none = (await jsonReq(base, c.method, c.path, body)).status;
     const bad = (await jsonReq(base, c.method, c.path, body, { token: "not-a-real-token" })).status;
     const x = retarget({ ...c, body }, b.dad_id);
-    const cross = (await jsonReq(base, x.method, x.path, x.body, { token: a.token })).status;
+    const cross = (await jsonReq(base, x.method, x.path, x.body, { token })).status;
     const u = retarget({ ...c, body }, unknown);
-    const unk = (await jsonReq(base, u.method, u.path, u.body, { token: a.token })).status;
-    const res = await jsonReq(base, c.method, c.path, body, { token: a.token });
+    const unk = (await jsonReq(base, u.method, u.path, u.body, { token })).status;
+    const res = await jsonReq(base, c.method, c.path, body, { token });
     if (c.after) c.after(res.data);
     rows.push({ route, own: res.status, none, bad, cross, unknown: unk, error: res.status >= 400 ? res.data : null });
   }

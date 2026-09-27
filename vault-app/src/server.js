@@ -73,6 +73,8 @@ export const PHASE1_ROUTES = [
   "POST /vault/comms/pull",
   "GET /vault/export/verified",
   "GET /vault/search",
+  "POST /vault/logout",
+  "POST /vault/panic",
 ];
 
 function json(res, status, body) {
@@ -212,6 +214,18 @@ export async function handleBffRequest(bff, req, url, body) {
     const out = await bff.postVaultProvision({ dad_id });
     log("http.provision", { dad: out.dad_id });
     return { status: 200, body: out };
+  }
+
+  // Token lifecycle (Slice 20). Same gate as every dad route: a dead token
+  // can't log itself out (401). Logout is ALL-DEVICE; /vault/panic is the
+  // same action under the name the dad sees ("log out everywhere now").
+  // No dad-facing revoke route: revoke is Nick-only (src/cli-token.js).
+  // New token after logout: operator reissue (CLI).
+  if (method === "POST" && (path === "/vault/logout" || path === "/vault/panic")) {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    log(path === "/vault/panic" ? "http.panic" : "http.logout", { dad: dad_id });
+    return { status: 200, body: await bff.postVaultLogout({ dad_id }) };
   }
 
   if (method === "POST" && path === "/vault/intake") {
