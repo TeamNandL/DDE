@@ -7,7 +7,7 @@
 //   3. Views run security_invoker; dde_app cannot touch the token table.
 //   4. Scoped exec: an app-level bug asking for B's rows inside A's request
 //      gets nothing, and a write for B is refused by the database.
-//   5. Full HTTP auth matrix on every route runs through RLS: 401/403/404/200.
+//   5. Full HTTP auth matrix on every route runs through RLS: 401/403/401/200.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -179,7 +179,7 @@ test("PG scoped exec: an app bug asking for dad B inside dad A's request gets no
   }
 });
 
-test("PG auth matrix through RLS: every route 401 none/bad · 403 cross · 404 unknown · 200 own", { skip }, async () => {
+test("PG auth matrix through RLS: every route 401 none/bad · 403 cross · 401 unknown (F1) · 200 own", { skip }, async () => {
   const { store, bff } = await open();
   const server = createServer(bff);
   const addr = await listenServer(server, { host: "127.0.0.1", port: 0 });
@@ -193,7 +193,7 @@ test("PG auth matrix through RLS: every route 401 none/bad · 403 cross · 404 u
     for (const r of rows) {
       assert.deepEqual(
         [r.none, r.bad, r.cross, r.unknown, r.own],
-        [401, 401, 403, 404, 200],
+        [401, 401, 403, 401, 200],
         `${r.route}: ${JSON.stringify(r.error)}`,
       );
     }

@@ -294,14 +294,14 @@ test("read-only: chip_entry never stamps last_next or writes anything", async ()
   }
 });
 
-test("gates: 404 unknown dad, 401 no token, 403 cross-dad", async () => {
+test("gates: 401 unknown dad (F1), 401 no token, 403 cross-dad", async () => {
   const s = await start();
   try {
     const a = await provisionedDad(s.base);
     const b = await provisionedDad(s.base);
 
     const unknown = await jsonReq(s.base, "GET", `/vault/chip_entry?dad_id=${randomUUID()}`);
-    assert.equal(unknown.status, 404);
+    assert.equal(unknown.status, 401);
 
     const noTok = await jsonReq(s.base, "GET", `/vault/chip_entry?dad_id=${a.dad_id}`);
     assert.equal(noTok.status, 401);

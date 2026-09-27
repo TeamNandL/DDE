@@ -104,7 +104,7 @@ test("PG export + soft delete + hard wipe: buckets, receipt, rows intact then go
     const after = await countAll(store, a.dad_id);
     for (const [t, n] of Object.entries(after)) assert.equal(n, 0, `${t} empty after wipe`);
     assert.equal(out.purged[0].counts.tokens, before.tokens);
-    assert.equal((await state(a.dad_id, a.token)).status, 404, "dad gone → unknown");
+    assert.equal((await state(a.dad_id, a.token)).status, 401, "dad gone → 401, same as revoked (F1)");
     assert.deepEqual(await countAll(store, b.dad_id), await countAll(store, b.dad_id), "B untouched");
     assert.equal((await state(b.dad_id, b.token)).status, 200);
     const { rows: tomb } = await store.query(`select purged_at, purged_counts from dde_deletions where dad_id = $1`, [a.dad_id]);

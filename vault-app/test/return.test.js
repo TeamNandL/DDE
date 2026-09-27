@@ -181,7 +181,7 @@ test("return with empty Next: {line: null, last_next: null} — nothing invented
   }
 });
 
-test("BLOCKER auth on /vault/return: 404 unknown dad, 401 no token, 403 cross-dad", async () => {
+test("BLOCKER auth on /vault/return: 401 unknown dad (F1), 401 no token, 403 cross-dad", async () => {
   const s = await start();
   const dadA = randomUUID();
   const dadB = randomUUID();
@@ -199,7 +199,7 @@ test("BLOCKER auth on /vault/return: 404 unknown dad, 401 no token, 403 cross-da
 
     // Unprovisioned dad → 404 before any token check.
     const unknown = await jsonReq(s.base, "POST", "/vault/return", { dad_id: randomUUID() });
-    assert.equal(unknown.status, 404);
+    assert.equal(unknown.status, 401);
 
     // No token → 401.
     const noTok = await jsonReq(s.base, "POST", "/vault/return", { dad_id: dadA });

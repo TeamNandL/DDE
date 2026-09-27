@@ -1,6 +1,6 @@
 // Slice 18 — Auth matrix on EVERY dad-scoped BFF route (memory store).
 // no token → 401 · bad token → 401 · another dad's token → 403 ·
-// unknown dad → 404 · own token → 200. Provision stays the only mint path.
+// unknown dad → 401, same body (F1) · own token → 200. Provision stays the only mint path.
 // The Postgres leg (auth-rls.pg.test.js) runs the same matrix with RLS on.
 
 import test from "node:test";
@@ -30,7 +30,7 @@ test("matrix covers every dad-scoped route in PHASE1_ROUTES (+ PATCH /vault/stat
   assert.ok(covered.has("PATCH /vault/state"));
 });
 
-test("auth matrix (memory): 401 none/bad · 403 cross-dad · 404 unknown · 200 own — every route", async () => {
+test("auth matrix (memory): 401 none/bad · 403 cross-dad · 401 unknown (F1) · 200 own — every route", async () => {
   const s = await start();
   try {
     const a = (await jsonReq(s.base, "POST", "/vault/provision", {})).data;
@@ -41,7 +41,7 @@ test("auth matrix (memory): 401 none/bad · 403 cross-dad · 404 unknown · 200 
       assert.equal(r.none, 401, `${r.route} no token`);
       assert.equal(r.bad, 401, `${r.route} bad token`);
       assert.equal(r.cross, 403, `${r.route} cross-dad`);
-      assert.equal(r.unknown, 404, `${r.route} unknown dad`);
+      assert.equal(r.unknown, 401, `${r.route} unknown dad → 401 (F1: same as revoked)`);
       assert.equal(r.own, 200, `${r.route} own token: ${JSON.stringify(r.error)}`);
     }
     assert.equal(rows.length, 43);
@@ -56,10 +56,10 @@ test("provision is the only unauthenticated mint path; raw token never stored", 
     const p = await jsonReq(s.base, "POST", "/vault/provision", {});
     assert.equal(p.status, 200);
     assert.match(p.data.token, /\S{20,}/);
-    // No other route creates a dad: an unknown dad is 404 even with a token.
+    // No other route creates a dad: an unknown dad is 401 even with a live token (F1).
     const other = randomUUID();
     const intake = await jsonReq(s.base, "POST", "/vault/intake", { dad_id: other, text: "hi" }, { token: p.data.token });
-    assert.equal(intake.status, 404);
+    assert.equal(intake.status, 401);
   } finally {
     await s.close();
   }

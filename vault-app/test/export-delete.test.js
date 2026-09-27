@@ -6,8 +6,8 @@
 //   delete  — Nick CLI only. No HTTP route. Soft first (tokens revoked, data
 //             intact, cancelable); hard wipe after 14 days via purge.
 //   rail    — soft-delete refused without a FRESH export receipt.
-//   after   — old token replay: 401 in the soft window, 404 once wiped
-//             (the dad no longer exists; Slice 18 gate order is unchanged).
+//   after   — old token replay: 401 in the soft window AND once wiped, same
+//             body as a never-existed dad (Nick F1 ruling — nothing leaks).
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -60,14 +60,14 @@ test("routes: GET /vault/export listed; NO delete / purge / wipe route of any ki
   assert.ok(!PHASE1_ROUTES.some((r) => /delete|purge|wipe|erase|forget/i.test(r)), "delete protects the dad from himself");
 });
 
-test("Cross-dad export → 403; no token 401; unknown dad 404", async () => {
+test("Cross-dad export → 403; no token 401; unknown dad 401 (F1)", async () => {
   const s = await start();
   try {
     const a = await seedDad(s);
     const b = (await jsonReq(s.base, "POST", "/vault/provision", {})).data;
     assert.equal((await fetchZip(s.base, b.dad_id, a.token)).status, 403);
     assert.equal((await fetchZip(s.base, a.dad_id, "")).status, 401);
-    assert.equal((await fetchZip(s.base, randomUUID(), a.token)).status, 404);
+    assert.equal((await fetchZip(s.base, randomUUID(), a.token)).status, 401);
     assert.equal(await s.opsStore.latestReceipt(b.dad_id), null, "a refused export leaves no receipt");
   } finally {
     await s.close();
@@ -189,7 +189,7 @@ test("Delete after export receipt → allowed (soft): every token 401, data inta
   }
 });
 
-test("After hard wipe → old token replay rejected (401 soft window → 404 wiped); every table empty; tombstone; re-purge no-op", async () => {
+test("After hard wipe → old token replay 401 (soft window and wiped alike, F1); every table empty; tombstone; re-purge no-op", async () => {
   const s = await start();
   try {
     const a = await seedDad(s);
@@ -209,11 +209,11 @@ test("After hard wipe → old token replay rejected (401 soft window → 404 wip
     assert.equal(p.counts.tokens, 2, "token rows dropped, not just revoked");
     assert.ok(p.counts.plan_topics > 0);
 
-    // Replay: the dad no longer exists, so the Slice 18 gate says 404 first.
+    // Replay: the dad no longer exists; the gate answers exactly as for a revoked token (F1).
     for (const t of [a.token, stolen]) {
       const r = await state(s.base, a.dad_id, t);
-      assert.deepEqual([r.status, r.data], [404, { error: "unknown dad" }]);
-      assert.equal((await jsonReq(s.base, "POST", "/vault/intake", { dad_id: a.dad_id, text: "hi" }, { token: t })).status, 404);
+      assert.deepEqual([r.status, r.data], [401, { error: "unauthorized" }]);
+      assert.equal((await jsonReq(s.base, "POST", "/vault/intake", { dad_id: a.dad_id, text: "hi" }, { token: t })).status, 401);
     }
     assert.equal(await s.tokenStore.lookupActive(hashToken(a.token)), null);
     for (const t of CLAIM_TABLES) {
@@ -272,7 +272,7 @@ test("Nick CLI: export writes zip + receipt; delete refused → allowed after ex
     assert.equal(pg.purged.length, 1);
     assert.match(out, /^PURGED dad …\w{4} at 2026-10-13/);
     assert.ok(!(await s.vault.getState(a.dad_id)), "state gone");
-    assert.equal((await state(s.base, a.dad_id, a.token)).status, 404);
+    assert.equal((await state(s.base, a.dad_id, a.token)).status, 401);
 
     assert.equal((await runDadCli(["delete"], { bff: s.bff, write })).code, 2);
     assert.equal((await runDadCli(["wipe", "--dad-id", a.dad_id], { bff: s.bff, write })).code, 2);
@@ -312,5 +312,54 @@ test("durable JSON ledger: receipt + pending deletion survive reopen; no dad con
     }
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("F1 ruling: soft-window replay, post-wipe replay, and a never-existed dad all answer 401 with the SAME body", async () => {
+  const s = await start();
+  try {
+    const a = await seedDad(s);
+    const b = (await jsonReq(s.base, "POST", "/vault/provision", {})).data;
+    const stolen = (await s.bff.mintToken({ dad_id: a.dad_id })).token;
+    await fetchZip(s.base, a.dad_id, a.token);
+    await s.bff.requestDelete({ dad_id: a.dad_id, now: T0 });
+
+    const DEAD = [401, { error: "unauthorized" }];
+    // 1. soft window: token revoked, dad still exists
+    const soft = await state(s.base, a.dad_id, stolen);
+    assert.deepEqual([soft.status, soft.data], DEAD, "soft window");
+
+    // 2. post-wipe: token rows gone AND dad gone
+    await s.bff.purgeDue({ now: T0 + 14 * DAY });
+    const wiped = await state(s.base, a.dad_id, stolen);
+    assert.deepEqual([wiped.status, wiped.data], DEAD, "post-wipe replay");
+    const wipedWrite = await jsonReq(s.base, "POST", "/vault/intake", { dad_id: a.dad_id, text: "hi" }, { token: stolen });
+    assert.deepEqual([wipedWrite.status, wipedWrite.data], DEAD, "post-wipe replay (write)");
+    // …and with a LIVE token of another dad: still 401, still the same body (never 404, never 403).
+    const wipedLive = await state(s.base, a.dad_id, b.token);
+    assert.deepEqual([wipedLive.status, wipedLive.data], DEAD, "wiped dad + someone else's live token");
+
+    // 3. never existed: same answer, no token or a live one
+    const ghost = randomUUID();
+    const never = await state(s.base, ghost, b.token);
+    assert.deepEqual([never.status, never.data], DEAD, "never-existed dad + live token");
+    const neverNoTok = await state(s.base, ghost, "");
+    assert.deepEqual([neverNoTok.status, neverNoTok.data], DEAD, "never-existed dad + no token");
+    const neverExport = await fetchZip(s.base, ghost, b.token);
+    assert.equal(neverExport.status, 401);
+
+    // Byte-identical bodies across all three cases.
+    assert.equal(JSON.stringify(soft.data), JSON.stringify(wiped.data));
+    assert.equal(JSON.stringify(wiped.data), JSON.stringify(never.data));
+    // Cross-dad on an EXISTING dad is still 403 — unchanged.
+    assert.equal((await state(s.base, b.dad_id, (await s.bff.mintToken({ dad_id: b.dad_id })).token)).status, 200);
+    const c = (await jsonReq(s.base, "POST", "/vault/provision", {})).data;
+    assert.equal((await state(s.base, c.dad_id, b.token)).status, 403);
+    // Operator CLI wording unchanged.
+    let out = "";
+    assert.equal((await runDadCli(["cancel-delete", "--dad-id", ghost], { bff: s.bff, write: (x) => (out += x) })).code, 1);
+    assert.match(out, /refused: unknown dad/);
+  } finally {
+    await s.close();
   }
 });

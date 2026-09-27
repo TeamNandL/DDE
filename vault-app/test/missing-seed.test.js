@@ -197,7 +197,7 @@ test("seed → fill loop: first blank closes, done bumps to 1 of 5", async () =>
   }
 });
 
-test("gates and validation: unknown pack 400; 404/401/403 matrix", async () => {
+test("gates and validation: unknown pack 400; 401/401/403 matrix (F1: unknown dad → 401)", async () => {
   const s = await start();
   try {
     const a = await provisionedDad(s.base);
@@ -213,7 +213,7 @@ test("gates and validation: unknown pack 400; 404/401/403 matrix", async () => {
     assert.equal(badPack.status, 400);
 
     const unknown = await jsonReq(s.base, "POST", "/vault/missing/seed", { dad_id: randomUUID() });
-    assert.equal(unknown.status, 404);
+    assert.equal(unknown.status, 401);
 
     const noTok = await jsonReq(s.base, "POST", "/vault/missing/seed", { dad_id: a.dad_id });
     assert.equal(noTok.status, 401);

@@ -67,7 +67,7 @@ GET /vault/state?dad_id=<uuid>
 Authorization: Bearer <token>
 
 → 200 state row: { dad_id, phase, this_week, missing[], next_action, … }
-→ 404 { "error": "unknown dad" }
+→ 401 { "error": "unauthorized" }   // unknown dad answers exactly like a bad token (F1)
 → 401 / 403 unauthorized / forbidden
 ```
 
@@ -465,7 +465,7 @@ counsel channel. Not Coach, not Quill, not Parenting Plan (§11).
 `Authorization: Bearer <token>` (preferred) or `X-DDE-Token: <token>`.
 Zero extra auth theater — no OAuth, no login page, no MFA on this slice.
 
-Auth matrix (Slice 18, every dad-scoped route): unknown dad → `404` ·
+Auth matrix (Slice 18, amended Slice 21 F1, every dad-scoped route): unknown dad (wiped **or** never provisioned) → `401` with the same body as a bad token ·
 no or bad token → `401` · another dad's token → `403` · own token → the
 route runs. After the gate, every database statement for that request runs
 as the non-owner role `dde_app` bound to that dad, and Postgres row-level
@@ -490,7 +490,7 @@ POST /vault/panic    { "dad_id": "<uuid>" }  + Bearer      // same action, the d
 → 200 { "logged_out": true, "revoked": <n> }   // EVERY token this dad holds is dead, the caller's included
 ```
 
-Same gate as every dad route (404 / 401 / 403 above): a dead token can't
+Same gate as every dad route (401 / 403 above): a dead token can't
 log itself out — that's a `401`, not something to retry. The dad hits panic
 from `/app`: **"Log out everywhere now"** under the intake box
 (`public/chip-entry.html`, `#btn_panic`). Chip can offer the same as a
@@ -530,7 +530,7 @@ there. Rollback: see `HOSTING.md` → *Rollback (Slice 20)*.
 ```
 GET /vault/export?dad_id=<uuid>   + Bearer
 → 200 application/zip  (content-disposition: attachment; filename="dde-export-<date>.zip")
-→ 401 / 403 / 404 as every dad route
+→ 401 / 403 as every dad route (unknown dad → 401)
 ```
 
 Zip layout:

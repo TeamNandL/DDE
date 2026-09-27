@@ -11,7 +11,7 @@ Minimal token gate: `POST /vault/provision` returns `{dad_id, token}`. Mutating 
 | Path | Needs DB? | Notes |
 | --- | --- | --- |
 | `GET /health` | No | `{ "ok": true }` — use this for Fly/Render checks |
-| `GET /vault/state?dad_id=<uuid>` | Yes | Requires Bearer/`X-DDE-Token`. 200 when provisioned; **404** `{"error":"unknown dad"}` otherwise (read-only — no create) |
+| `GET /vault/state?dad_id=<uuid>` | Yes | Requires Bearer/`X-DDE-Token`. 200 when provisioned; **401** `{"error":"unauthorized"}` otherwise — identical to a bad token, so an unknown dad never reads differently (F1). Read-only — no create |
 | `POST /vault/provision` | Yes | **Only** create path. Inserts `state` (`phase=intake`, `missing=[]`, `next_action=null`). Returns `{dad_id, token}` (`dde-stub-<uuid>`). Stores **token_hash** only (durable) |
 
 ## Build locally
@@ -180,8 +180,10 @@ Hard wipe (`dad:purge`, run by Nick — cron it daily or run it by hand):
 deletes every row for the dad from all 14 dad tables (children before
 parents) **and drops his token rows**, then writes `purged_at` +
 `purged_counts` on the ledger row. The dad no longer exists: any old token
-replayed gets `404 unknown dad` (the Slice 18 gate order — dad exists
-before token — is unchanged; during the soft window it was `401`).
+replayed gets `401 {"error":"unauthorized"}` — byte-identical to the soft
+window, to a revoked token, and to a dad that never existed (Nick F1
+ruling: the Bearer gate treats "dad not found" as unauthorized; no
+tombstone lookup, nothing leaks).
 
 ### Irreversible — a code rollback does NOT restore data
 

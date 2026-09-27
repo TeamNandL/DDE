@@ -159,19 +159,15 @@ export function extractToken(req) {
 
 /**
  * Tenancy + auth for every dad-scoped route except provision.
- * Order: dad exists → 404 unknown dad; then token → 401/403.
- * (Unprovisioned curls without a token must still get 404, not 401.)
+ * Bearer gate first, always. A dad that does not exist — wiped (Slice 21)
+ * or never provisioned — answers exactly like a revoked token: 401
+ * {"error":"unauthorized"}. Nothing distinguishes the two (Nick F1 ruling).
  */
-// Auth matrix (Slice 18): unknown dad → 404 · no / bad token → 401 ·
-// token for another dad → 403 · own token → the route runs, and every SQL
-// statement after this point runs as dde_app bound to this dad (RLS).
+// Auth matrix (Slice 18, amended Slice 21): no / bad / revoked / expired
+// token → 401 · unknown dad → 401 (same body) · token for another existing
+// dad → 403 · own token → the route runs, and every SQL statement after
+// this point runs as dde_app bound to this dad (RLS).
 async function gateDad(bff, req, dad_id) {
-  const state = await bff.getVaultState({ dad_id });
-  if (!state) {
-    const err = new Error("unknown dad");
-    err.status = 404;
-    throw err;
-  }
   await bff.checkToken(dad_id, extractToken(req));
   bindDad(dad_id);
 }
@@ -345,9 +341,8 @@ export async function handleBffRequest(bff, req, url, body) {
   if (method === "GET" && path === "/vault/state") {
     // Read-only: never insert/upsert/create on GET.
     const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
-    await gateDad(bff, req, dad_id);
+    await gateDad(bff, req, dad_id); // gate already proved the dad exists (else 401)
     const state = await bff.getVaultState({ dad_id });
-    if (!state) return { status: 404, body: { error: "unknown dad" } };
     log("http.state.get", { dad: dad_id });
     return { status: 200, body: state };
   }
