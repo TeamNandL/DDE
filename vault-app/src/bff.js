@@ -48,6 +48,16 @@ import {
   missingNext,
   renderOnePager,
 } from "./involvement.js";
+import {
+  DRAFT_FOOTER as LEGAL_DRAFT_FOOTER,
+  FLAG_LABELS as LEGAL_FLAG_LABELS,
+  HUMAN_LINE as LEGAL_HUMAN_LINE,
+  LAWYER_LINE as LEGAL_LAWYER_LINE,
+  capture as legalCapture,
+  needsHuman as legalNeedsHuman,
+  nextStep as legalNextStep,
+  renderPacket as legalRenderPacket,
+} from "./legalintake.js";
 import { LAWYER_LINE as TRANSLATOR_LAWYER_LINE, explain as translatorExplain } from "./translator.js";
 
 function unknownDad() {
@@ -300,6 +310,49 @@ export function makeBff(vault, opts = {}) {
       if (mn.missing) return mn;
     }
     return first ?? { missing: null, next: { job: "re_engagement", line: "Add a kid to start the cheat sheet." }, left: 0 };
+  }
+
+  // ---- Legal Intake helpers (Slice 17) ---------------------------------------
+  function publicHandoff(d) {
+    if (!d) return null;
+    return {
+      id: d.id,
+      version: d.version,
+      body: d.body,
+      created_at: d.created_at,
+      sent_at: null, // draft ≠ send — there is no send path
+      status: "draft",
+    };
+  }
+
+  function publicLegalIntake(rec, draft) {
+    const human = legalNeedsHuman(rec);
+    return {
+      id: rec.id,
+      created_at: rec.created_at,
+      who: rec.who,
+      urgency: rec.urgency,
+      what: rec.what_cold,
+      flags: [...rec.flags],
+      flag_lines: rec.flags.map((f) => LEGAL_FLAG_LABELS[f]),
+      human_review: human,
+      human_line: human ? LEGAL_HUMAN_LINE : null,
+      route: rec.route,
+      claim: true,
+      verified: false,
+      next: legalNextStep(rec, Boolean(draft)),
+      handoff: publicHandoff(draft),
+      lawyer_line: LEGAL_LAWYER_LINE,
+    };
+  }
+
+  async function requireLegalIntake(dad_id, id) {
+    if (id !== undefined && (typeof id !== "string" || !/^[0-9a-f-]{36}$/i.test(id))) {
+      throw Object.assign(new Error("id must be an intake id"), { status: 400 });
+    }
+    const rec = id ? await vault.getLegalIntake(dad_id, id) : await vault.latestLegalIntake(dad_id);
+    if (!rec) throw Object.assign(new Error("no intake yet"), { status: 404 });
+    return rec;
   }
 
   // Process Translator view: the stored, cold result + private candidates.
@@ -839,6 +892,44 @@ export function makeBff(vault, opts = {}) {
         verified: false,
         claim_footer: INVOLVEMENT_FOOTER,
       };
+    },
+
+    // ---- Legal Intake seat (Slice 17) ----------------------------------------
+    // Intake + triage + handoff DRAFT. Never answers the law. Writes only
+    // legal_intakes + legal_handoff_drafts (sent_at locked null) — never a
+    // Quill event, Coach draft, OFW row, plan or translator row. Logs: ids,
+    // route, flag keys only.
+
+    // POST /vault/legal/intake {dad_id, who, what, urgency}
+    async postLegalIntake({ dad_id, who, what, urgency }) {
+      await requireDad(dad_id);
+      const c = legalCapture({ who, what, urgency });
+      const rec = await vault.insertLegalIntake(dad_id, c);
+      log("legal.capture", { dad: dad_id, id: rec.id, route: c.route, flags: c.flags });
+      return publicLegalIntake(rec, null);
+    },
+
+    // GET /vault/legal/intake {dad_id, id?} -> that intake (or latest) + latest draft
+    async getLegalIntake({ dad_id, id }) {
+      await requireDad(dad_id);
+      const rec = await requireLegalIntake(dad_id, id);
+      return publicLegalIntake(rec, await vault.latestHandoffDraft(rec.id));
+    },
+
+    // POST /vault/legal/handoff {dad_id, id?} -> new draft version (never sent)
+    async postLegalHandoff({ dad_id, id }) {
+      await requireDad(dad_id);
+      const rec = await requireLegalIntake(dad_id, id);
+      if (rec.route === "process_translator") {
+        throw Object.assign(
+          new Error("this is a what-does-this-mean question — use the Process Translator"),
+          { status: 409 },
+        );
+      }
+      const version = ((await vault.latestHandoffDraft(rec.id))?.version ?? 0) + 1;
+      const today = new Date(opts.now ?? Date.now()).toISOString().slice(0, 10);
+      const draft = await vault.insertHandoffDraft(dad_id, rec.id, version, legalRenderPacket(rec, version, today));
+      return { ...publicLegalIntake(rec, draft), draft_footer: LEGAL_DRAFT_FOOTER };
     },
 
     // GET /vault/chip_entry {dad_id}

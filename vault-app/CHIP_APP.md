@@ -410,6 +410,27 @@ never why · re-engagement (ask the school or provider directly). Values
 are claims, never verified; no SSNs, no money. Not Stan/OFW, not
 Parenting Plan (§11), not Process Translator (§12), not Coach, not Quill.
 
+### 14) Legal Intake seat — Slice 17 (pointer)
+
+**Intake + triage + handoff DRAFT. Never answers the law.** Every reply
+leads with the loud `lawyer_line` and carries ONE `next`.
+
+| Route | Does |
+|---|---|
+| `POST /vault/legal/intake {dad_id, who, what, urgency}` | capture v1; flags + route |
+| `GET /vault/legal/intake?dad_id[&id]` | that intake (or latest) + latest draft |
+| `POST /vault/legal/handoff {dad_id, id?}` | new packet draft — `sent_at: null`, never sent |
+
+`who`: `co_parent`, `my_lawyer`, `their_lawyer`, `court`, `school`,
+`provider`, `other`. `urgency` is the dad's pick (`today`, `this_week`,
+`this_month`, `not_sure`) — the bot never decides a legal emergency.
+Human-review `flags`: `safety`, `deadline_language`, `fire_lawyer`,
+`custody_emergency`, `money_numbers`, `out_of_venture`. Emergency feel →
+`human_review: true`, no numbers or jurisdiction rules invented. "What
+does this paper mean?" → `route: process_translator` (§12); "what should I
+do?" stays here and becomes a question for the lawyer. No send path, no
+counsel channel. Not Coach, not Quill, not Parenting Plan (§11).
+
 ### Auth header
 
 `Authorization: Bearer <token>` (preferred) or `X-DDE-Token: <token>`.

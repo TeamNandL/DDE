@@ -44,6 +44,9 @@ const TRANSLATOR_CAND_COLS = `id, dad_id, translation_id, created_at, label, dat
 const INVOLVEMENT_COLS = `dad_id, kid_key, field_key, position, value,
   to_char(asked_on, 'YYYY-MM-DD') as asked_on, asked_via, outcome, source, claim_status, updated_at`;
 
+const LEGAL_INTAKE_COLS = `id, dad_id, created_at, who, what_cold, urgency, flags, route, claim_status`;
+const HANDOFF_COLS = `id, intake_id, dad_id, version, body, created_at, sent_at`;
+
 const PLAN_TOPIC_COLS = `dad_id, topic_key, position, status, choice, detail, stance, depth,
   example_shown, updated_at`;
 
@@ -513,6 +516,54 @@ export class SqlVault {
         returning ${INVOLVEMENT_COLS};`,
     );
     log("involvement.update", { table: "involvement_fields", dad: dadId, field: key });
+    return rows?.[0] ?? null;
+  }
+
+  // ---- legal intake (vault/014_legal_intake.sql) ---------------------------
+
+  async insertLegalIntake(dadId, c) {
+    const id = randomUUID();
+    const rows = await this.exec(
+      `insert into legal_intakes (id, dad_id, who, what_cold, urgency, flags, route)
+       values (${lit(id)}, ${lit(dadId)}, ${lit(c.who)}, ${lit(c.what_cold)}, ${lit(c.urgency)},
+               ${litArr(c.flags)}, ${lit(c.route)})
+       returning ${LEGAL_INTAKE_COLS};`,
+    );
+    log("legal.intake", { table: "legal_intakes", id, dad: dadId, route: c.route });
+    return rows?.[0] ?? null;
+  }
+
+  async getLegalIntake(dadId, id) {
+    const rows = await this.exec(
+      `select ${LEGAL_INTAKE_COLS} from legal_intakes where dad_id = ${lit(dadId)} and id = ${lit(id)};`,
+    );
+    return rows?.[0] ?? null;
+  }
+
+  async latestLegalIntake(dadId) {
+    const rows = await this.exec(
+      `select ${LEGAL_INTAKE_COLS} from legal_intakes where dad_id = ${lit(dadId)}
+        order by created_at desc, id desc limit 1;`,
+    );
+    return rows?.[0] ?? null;
+  }
+
+  async latestHandoffDraft(intakeId) {
+    const rows = await this.exec(
+      `select ${HANDOFF_COLS} from legal_handoff_drafts where intake_id = ${lit(intakeId)}
+        order by version desc limit 1;`,
+    );
+    return rows?.[0] ?? null;
+  }
+
+  async insertHandoffDraft(dadId, intakeId, version, body) {
+    const id = randomUUID();
+    const rows = await this.exec(
+      `insert into legal_handoff_drafts (id, intake_id, dad_id, version, body)
+       values (${lit(id)}, ${lit(intakeId)}, ${lit(dadId)}, ${Number(version)}, ${lit(body)})
+       returning ${HANDOFF_COLS};`,
+    );
+    log("legal.handoff", { table: "legal_handoff_drafts", id, dad: dadId, version });
     return rows?.[0] ?? null;
   }
 

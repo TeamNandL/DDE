@@ -24,6 +24,7 @@ COPY vault/010_court_prep.sql /app/vault/010_court_prep.sql
 COPY vault/011_parenting_plan.sql /app/vault/011_parenting_plan.sql
 COPY vault/012_process_translator.sql /app/vault/012_process_translator.sql
 COPY vault/013_involvement.sql /app/vault/013_involvement.sql
+COPY vault/014_legal_intake.sql /app/vault/014_legal_intake.sql
 
 WORKDIR /app/vault-app
 COPY vault-app/package.json vault-app/package-lock.json ./
