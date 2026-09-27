@@ -32,7 +32,7 @@ function litArr(arr) {
 
 // Dates come back as text so memory and Postgres rows compare the same.
 const CANDIDATE_COLS = `id, dad_id, pipe, created_at, source, source_event_id, quote, who, what,
-  when_text, to_char(when_on, 'YYYY-MM-DD') as when_on, kids, cues, confidence, status, ofw_ref, line`;
+  when_text, to_char(when_on, 'YYYY-MM-DD') as when_on, kids, cues, confidence, review, status, ofw_ref, line`;
 const NOTIFICATION_COLS = `id, dad_id, created_at, kind, slot,
   to_char(for_date, 'YYYY-MM-DD') as for_date, title, due_start, due_end, status`;
 
@@ -267,6 +267,15 @@ export class SqlVault {
     const rows = await this.exec(
       `update candidate_facts set status = ${lit(status)}, ofw_ref = ${lit(ofw_ref ?? null)},
               line = ${lit(line)}
+        where dad_id = ${lit(dadId)} and id = ${lit(id)}
+        returning ${CANDIDATE_COLS};`,
+    );
+    return rows?.[0] ?? null;
+  }
+
+  async setCandidateReview(dadId, id, review) {
+    const rows = await this.exec(
+      `update candidate_facts set review = ${lit(review)}
         where dad_id = ${lit(dadId)} and id = ${lit(id)}
         returning ${CANDIDATE_COLS};`,
     );

@@ -1,12 +1,14 @@
 -- DDE vault — court-prep capture (COURT_PREP_PRINCIPLES §2–§5).
 --
--- candidate_facts: every keyword hit from the dad's own words, structured
+-- candidate_facts ("sticky notes"): every keyword hit from the dad's own words, structured
 --   (who / what / when / kids), confidence 'low', claim pipe ONLY. The OFW
 --   cross-check stub stamps status: 'not_proof_yet' (OFW silent or not
 --   comparable), 'matched', or 'conflict' (+ ofw_ref and one parent line).
 --   Candidates are never verified rows and never feed verified_export;
---   promotion is a later human-supervised pass (not built). OFW rows in
---   communications are read, never written, by the cross-check.
+--   review: every note starts 'needs_reviewed'; the dad keeps what's true
+--   ('kept') or tosses junk ('tossed' — hidden, never deleted). Keeping
+--   does not verify: status only changes from an OFW cross-check. OFW rows
+--   in communications are read, never written, by the cross-check.
 --
 -- notifications: proactive check-ins — two windows per day (floor one),
 --   unread → read → done; "missed" is computed at read time past due_end.
@@ -39,6 +41,12 @@ create table if not exists candidate_facts (
   ofw_ref         text,
   line            text not null
 );
+
+-- Idempotent add for any database that applied the first cut of 010.
+alter table candidate_facts add column if not exists review text not null default 'needs_reviewed';
+alter table candidate_facts drop constraint if exists candidate_facts_review_check;
+alter table candidate_facts add constraint candidate_facts_review_check
+  check (review in ('needs_reviewed','kept','tossed'));
 
 create index if not exists candidate_facts_dad_idx on candidate_facts (dad_id, created_at);
 

@@ -48,6 +48,14 @@ test("PG court-prep: candidate → OFW conflict (OFW untouched) → check-ins id
     const [ofw] = await store.vault.listOfwPulls(dad_id);
     assert.equal(ofw.body_cold, body_cold, "OFW never auto-overwritten");
 
+    // Sticky-note review persists (010 review column) and never changes status.
+    const kept = await bff.postCandidateReview({ dad_id, id: candidates[0].id, review: "keep" });
+    assert.equal(kept.review, "kept");
+    assert.equal(kept.status, "conflict");
+    await bff.postCandidateReview({ dad_id, id: candidates[0].id, review: "toss" });
+    assert.equal((await bff.getVaultCandidates({ dad_id })).candidates.length, 0);
+    assert.equal((await bff.getVaultCandidates({ dad_id, include_tossed: true })).candidates.length, 1);
+
     const verified = await bff.getVaultExportVerified({ dad_id });
     assert.equal(verified.length, 1, "candidates never reach verified_export");
 

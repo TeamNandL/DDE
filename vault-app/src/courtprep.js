@@ -159,7 +159,7 @@ function kidsIn(sentence) {
 /**
  * §2 + §4: every sentence with a keyword hit (an event cue OR a when cue)
  * becomes ONE candidate fact. Over-capture: nothing with a hit is dropped
- * here — weeding is a later human-supervised pass. Callers pass text that
+ * here — each note waits for the dad's review (keep / toss). Callers pass text that
  * already went through the harm → PII → venom rails.
  *
  * -> [{ what, who[], when_text, when_on, kids[], cues[], quote }]

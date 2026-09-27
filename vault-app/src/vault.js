@@ -328,6 +328,7 @@ export class Vault {
       status: row.status ?? "not_proof_yet",
       ofw_ref: row.ofw_ref ?? null,
       line: row.line,
+      review: "needs_reviewed",
     };
     this.candidate_facts.push(rec);
     log("candidate.insert", { table: "candidate_facts", id: rec.id, dad: dadId, status: rec.status });
@@ -346,6 +347,14 @@ export class Vault {
     if (!rec) return null;
     if (!CANDIDATE_STATUSES.has(status)) throw new Error("unknown status");
     Object.assign(rec, { status, ofw_ref: ofw_ref ?? null, line });
+    return rec;
+  }
+
+  setCandidateReview(dadId, id, review) {
+    if (!["needs_reviewed", "kept", "tossed"].includes(review)) throw new Error("unknown review");
+    const rec = this.candidate_facts.find((c) => c.dad_id === dadId && c.id === id);
+    if (!rec) return null;
+    rec.review = review;
     return rec;
   }
 

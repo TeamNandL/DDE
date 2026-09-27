@@ -192,6 +192,8 @@ export function makeBff(vault, opts = {}) {
     return changed;
   }
 
+  const REVIEW_LABEL = { needs_reviewed: "Needs reviewed", kept: "Kept", tossed: "Tossed" };
+
   function publicCandidate(c) {
     return {
       id: c.id,
@@ -201,6 +203,8 @@ export function makeBff(vault, opts = {}) {
       when_on: c.when_on ?? null,
       kids: c.kids ?? [],
       confidence: c.confidence ?? "low",
+      review: c.review ?? "needs_reviewed",
+      label: REVIEW_LABEL[c.review ?? "needs_reviewed"],
       status: c.status,
       line: c.line,
       quote: c.quote ?? null,
@@ -374,11 +378,40 @@ export function makeBff(vault, opts = {}) {
     // Court-prep candidate facts, oldest first. Every one is claim / low
     // confidence; status is not_proof_yet | matched | conflict and `line`
     // is the one sentence the parent sees. Never verified.
-    async getVaultCandidates({ dad_id }) {
+    // Sticky notes: every candidate starts "Needs reviewed". The dad keeps
+    // what's true and tosses junk; tossed notes are hidden here (pass
+    // include_tossed to see them) but never deleted.
+    async getVaultCandidates({ dad_id, include_tossed = false }) {
       await requireDad(dad_id);
-      const rows = await vault.listCandidates(dad_id);
+      const rows = (await vault.listCandidates(dad_id)).filter(
+        (c) => include_tossed || (c.review ?? "needs_reviewed") !== "tossed",
+      );
       log("candidates.list", { dad: dad_id, n: rows.length });
-      return { candidates: rows.map(publicCandidate) };
+      return {
+        needs_reviewed: rows.filter((c) => (c.review ?? "needs_reviewed") === "needs_reviewed").length,
+        candidates: rows.map(publicCandidate),
+      };
+    },
+
+    // POST /vault/candidates/review {dad_id, id, review: keep|toss}
+    // Keep ≠ true: a kept note is still the dad's account (claim, low,
+    // status untouched) — only OFW can make it match. Toss hides, never deletes.
+    async postCandidateReview({ dad_id, id, review }) {
+      await requireDad(dad_id);
+      const REVIEW = { keep: "kept", toss: "tossed" };
+      if (!REVIEW[review]) {
+        const err = new Error("review must be keep or toss");
+        err.status = 400;
+        throw err;
+      }
+      const rec = await vault.setCandidateReview(dad_id, id, REVIEW[review]);
+      if (!rec) {
+        const err = new Error("unknown candidate");
+        err.status = 404;
+        throw err;
+      }
+      log("candidates.review", { dad: dad_id, id, review: REVIEW[review] });
+      return publicCandidate(rec);
     },
 
     // POST /vault/checkins/ensure {dad_id, date?, tz_offset_minutes?}
@@ -662,8 +695,13 @@ export function makeBff(vault, opts = {}) {
     // written:0, no row, no log line), then PII strip, then venom strip;
     // the draft lands as direction='draft', sent_at null, pipe='claim' —
     // never sent, never verified. NO send endpoint exists for drafts.
-    async postCommsDraft({ dad_id, body, kind }) {
+    async postCommsDraft({ dad_id, body, kind, on_record }) {
       await requireDad(dad_id);
+      if (on_record !== undefined && on_record !== null && typeof on_record !== "boolean") {
+        const err = new Error("on_record must be true or false");
+        err.status = 400;
+        throw err;
+      }
       if (kind !== undefined && kind !== null && kind !== "cold_ask") {
         const err = new Error("unknown draft kind");
         err.status = 400;
@@ -692,7 +730,10 @@ export function makeBff(vault, opts = {}) {
         draft_kind: kind ?? null,
         soft_grade,
       });
-      const mode = draftMode(cold);
+      // De-escalate vs document-this: the dad saying he wants this request
+      // ON THE RECORD forces document mode even when the wording heuristic
+      // misses it. on_record:false never downgrades a detected record ask.
+      const mode = on_record === true ? "document" : draftMode(cold);
       log("comms.draft", { dad: dad_id, id: rec.id, kind: kind ?? "none", grade: soft_grade, mode });
       return { written: 1, draft_id: rec.id, body: cold, soft_grade, mode, say: draftSayLine(mode) };
     },

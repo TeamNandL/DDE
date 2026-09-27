@@ -246,7 +246,7 @@ greeting `POST /vault/return` gives, but this GET **never stamps
 
 ```
 POST /vault/comms/draft
-{ "dad_id": "<uuid>", "body": "<cold ask text>", "kind"?: "cold_ask" }
+{ "dad_id": "<uuid>", "body": "<cold ask text>", "kind"?: "cold_ask", "on_record"?: true }
 → 200 { "written": 1, "draft_id": "<uuid>", "body": "<stripped>",
         "soft_grade": "ready" | "tighten",   // ready = nothing stripped for tone and ≤ 280 chars; tighten = venom came out or runs long (stored either way); absent when written:0
         "mode": "document" | "de_escalate",
@@ -257,6 +257,17 @@ POST /vault/comms/draft
 GET /vault/comms/drafts?dad_id=<uuid>
 → 200 [ { "draft_id", "body", "kind", "created_at" } ]   // drafts ONLY
 ```
+
+**Coach ≠ intake.** Coach's primary job is vent → one **sendable cold**
+draft. The noticed sentence ("They cancelled your Friday visit. Matter to
+you?") is Quill **intake** — a separate pipe, never Coach.
+
+**De-escalate vs document-this.** When the dad says he wants the request
+**on the record**, Chip sends `"on_record": true` with the draft: `mode`
+is then always `document` (Next: send it — it puts your ask on the
+record), even if the wording heuristic missed it. Without the flag the
+heuristic decides; `on_record: false` never downgrades a detected record
+ask. Same seat, same endpoint — no new seat.
 
 **Coach / Tone seat (vent hot → send cold).** When the dad asks for words
 ("help me say something calm…"), Chip writes ONE cold, OFW-ready draft and
@@ -273,7 +284,7 @@ Drafts are **never sent and never verified** (direction `draft`, no
 stays a separate human decision via `/vault/comms/cold`. Harm → PII →
 venom rails run before anything is stored.
 
-### 10) Court-prep capture (COURT_PREP_PRINCIPLES §2–§5)
+### 10) Court-prep capture — Slice 13 (COURT_PREP_PRINCIPLES §2–§5)
 
 Automatic on every non-harm intake (except statement drops — Track 2),
 `/vault/tell`, and `/vault/return` answer: each keyword-hit sentence
@@ -281,13 +292,26 @@ Automatic on every non-harm intake (except statement drops — Track 2),
 `who / what / when_text / when_on / kids`, `confidence: "low"`, claim pipe
 only, dollar amounts masked `[amount]`. No response shape changes.
 
+**Sticky notes — "Needs reviewed".** To the dad each candidate is a
+sticky note: it starts **Needs reviewed**; he keeps what's true and
+tosses junk. Keeping does **not** make it proof — a kept note is still
+his account (claim, low, "not proof yet") until OFW agrees. Tossed notes
+are hidden, never deleted. Chip never asserts a note is true.
+
 ```
-GET /vault/candidates?dad_id=<uuid>
-→ 200 { "candidates": [ { "id", "what", "who", "when_text", "when_on",
+GET /vault/candidates?dad_id=<uuid>[&include_tossed=true]
+→ 200 { "needs_reviewed": N,
+        "candidates": [ { "id", "what", "who", "when_text", "when_on",
         "kids", "confidence": "low",
+        "review": "needs_reviewed"|"kept"|"tossed", "label": "Needs reviewed"|"Kept"|"Tossed",
         "status": "not_proof_yet" | "matched" | "conflict",
         "line": "Yesterday: visit cancelled — your account, not proof yet.",
         "quote", "source", "created_at" } ] }
+```
+
+```
+POST /vault/candidates/review { "dad_id", "id", "review": "keep" | "toss" }
+→ 200 <the note>   // 400 bad review, 404 not this dad's note
 ```
 
 **OFW stub (§3):** compares candidates with a resolved day against the

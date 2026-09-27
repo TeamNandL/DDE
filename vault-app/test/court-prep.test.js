@@ -346,7 +346,7 @@ test("Chip contract docs name the court-prep endpoints and keep the rails", asyn
   }
   assert.match(app, /OFW rows are read, \*\*never written\*\*/);
   const dadT = readFileSync(new URL("../CHIP_DAD_TEMPLATE.md", import.meta.url), "utf8");
-  assert.match(dadT, /Never guess why; never pick a side/);
+  assert.match(dadT, /Never\s+guess why; never pick a side/);
   // The principles file is canonical and untouched by this slice.
   const principles = readFileSync(new URL("../COURT_PREP_PRINCIPLES.md", import.meta.url), "utf8");
   assert.match(principles, /OFW is the verified record and is never\s+auto-overwritten/);

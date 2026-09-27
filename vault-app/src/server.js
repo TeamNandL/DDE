@@ -43,6 +43,7 @@ export const PHASE1_ROUTES = [
   "PUT /vault/state",
   "GET /vault/progress",
   "GET /vault/candidates",
+  "POST /vault/candidates/review",
   "GET /vault/notifications",
   "POST /vault/checkins/ensure",
   "POST /vault/notifications/mark",
@@ -340,7 +341,23 @@ export async function handleBffRequest(bff, req, url, body) {
     await gateDad(bff, req, dad_id);
     // Log hygiene: ids only — never quotes or lines.
     log("http.candidates", { dad: dad_id });
-    return { status: 200, body: await bff.getVaultCandidates({ dad_id }) };
+    const include_tossed = q.get("include_tossed") === "true";
+    return { status: 200, body: await bff.getVaultCandidates({ dad_id, include_tossed }) };
+  }
+
+  if (method === "POST" && path === "/vault/candidates/review") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    if (typeof body.id !== "string" || !UUID_RE.test(body.id)) {
+      const err = new Error("id must be a uuid");
+      err.status = 400;
+      throw err;
+    }
+    log("http.candidates.review", { dad: dad_id });
+    return {
+      status: 200,
+      body: await bff.postCandidateReview({ dad_id, id: body.id, review: body.review }),
+    };
   }
 
   if (method === "GET" && path === "/vault/notifications") {
@@ -403,7 +420,7 @@ export async function handleBffRequest(bff, req, url, body) {
     log("http.comms.draft", { dad: dad_id });
     return {
       status: 200,
-      body: await bff.postCommsDraft({ dad_id, body: body.body, kind: body.kind }),
+      body: await bff.postCommsDraft({ dad_id, body: body.body, kind: body.kind, on_record: body.on_record }),
     };
   }
 
