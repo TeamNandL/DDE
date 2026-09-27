@@ -47,6 +47,9 @@ const PATTERN_TAGS = new Set([
   "schedule_change",
 ]);
 
+const CANDIDATE_WHATS = new Set(["cancelled", "attended", "late", "time_with", "schedule", "mention"]);
+const CANDIDATE_STATUSES = new Set(["not_proof_yet", "matched", "conflict"]);
+
 function commonColumns(dadId, row) {
   const pipe = row.pipe;
   if (!PIPES.has(pipe)) {
@@ -72,6 +75,8 @@ export class Vault {
     this.documents = [];
     this.month_summary = [];
     this.state = new Map(); // dad_id -> single state row (upserted)
+    this.candidate_facts = []; // court-prep candidates (claim only, low)
+    this.notifications = []; // court-prep check-ins
   }
 
   insertEvent(dadId, row) {
@@ -298,6 +303,114 @@ export class Vault {
       missing: [],
       next_action: null,
     });
+  }
+
+  // ---- court-prep (vault/010_court_prep.sql twin) -------------------------
+
+  insertCandidate(dadId, row) {
+    if (!CANDIDATE_WHATS.has(row.what)) throw new Error("unknown candidate what");
+    if (!CANDIDATE_STATUSES.has(row.status ?? "not_proof_yet")) throw new Error("unknown status");
+    const rec = {
+      id: randomUUID(),
+      dad_id: dadId,
+      pipe: "claim",
+      created_at: new Date().toISOString(),
+      source: row.source,
+      source_event_id: row.source_event_id ?? null,
+      quote: row.quote ?? null,
+      who: row.who ?? [],
+      what: row.what,
+      when_text: row.when_text ?? null,
+      when_on: row.when_on ?? null,
+      kids: row.kids ?? [],
+      cues: row.cues ?? [],
+      confidence: "low",
+      status: row.status ?? "not_proof_yet",
+      ofw_ref: row.ofw_ref ?? null,
+      line: row.line,
+      review: "needs_reviewed",
+    };
+    this.candidate_facts.push(rec);
+    log("candidate.insert", { table: "candidate_facts", id: rec.id, dad: dadId, status: rec.status });
+    return rec;
+  }
+
+  listCandidates(dadId) {
+    return this.candidate_facts
+      .filter((c) => c.dad_id === dadId)
+      .slice()
+      .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+  }
+
+  updateCandidateCheck(dadId, id, { status, ofw_ref, line }) {
+    const rec = this.candidate_facts.find((c) => c.dad_id === dadId && c.id === id);
+    if (!rec) return null;
+    if (!CANDIDATE_STATUSES.has(status)) throw new Error("unknown status");
+    Object.assign(rec, { status, ofw_ref: ofw_ref ?? null, line });
+    return rec;
+  }
+
+  setCandidateReview(dadId, id, review) {
+    if (!["needs_reviewed", "kept", "tossed"].includes(review)) throw new Error("unknown review");
+    const rec = this.candidate_facts.find((c) => c.dad_id === dadId && c.id === id);
+    if (!rec) return null;
+    rec.review = review;
+    return rec;
+  }
+
+  // OFW = verified pull rows on the ofw channel. Read-only for court-prep.
+  listOfwPulls(dadId) {
+    return this.communications.filter(
+      (c) => c.dad_id === dadId && c.direction === "pull" && c.channel === "ofw" && c.pipe === "verified",
+    );
+  }
+
+  // Idempotent per (dad, kind, for_date, slot). Returns that day's items.
+  ensureNotifications(dadId, items) {
+    let created = 0;
+    for (const it of items) {
+      const exists = this.notifications.some(
+        (n) => n.dad_id === dadId && n.kind === it.kind && n.for_date === it.for_date && n.slot === it.slot,
+      );
+      if (exists) continue;
+      this.notifications.push({
+        id: randomUUID(),
+        dad_id: dadId,
+        created_at: new Date().toISOString(),
+        status: "unread",
+        ...it,
+      });
+      created += 1;
+    }
+    return created;
+  }
+
+  listNotifications(dadId) {
+    return this.notifications
+      .filter((n) => n.dad_id === dadId)
+      .slice()
+      .sort((a, b) => String(a.due_start).localeCompare(String(b.due_start)));
+  }
+
+  setNotificationStatus(dadId, id, status) {
+    const rec = this.notifications.find((n) => n.dad_id === dadId && n.id === id);
+    if (!rec) return null;
+    rec.status = status;
+    return rec;
+  }
+
+  // A dad's words inside an open, not-done check-in window answer it.
+  completeOpenCheckins(dadId, nowIso) {
+    const now = new Date(nowIso).getTime();
+    let done = 0;
+    for (const n of this.notifications) {
+      if (n.dad_id !== dadId || n.status === "done") continue;
+      if (new Date(n.due_start).getTime() <= now && now <= new Date(n.due_end).getTime()) {
+        n.status = "done";
+        done += 1;
+      }
+    }
+    return done;
   }
 
   // Read helpers used by spreadsheet views (same names as SqlVault).

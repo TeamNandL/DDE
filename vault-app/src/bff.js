@@ -20,6 +20,13 @@ import { clampProgressPatch, progressChipLine, progressLine, softGrade } from ".
 import { createMemoryTokenStore, hashToken } from "./tokens.js";
 import { buildExhibitPacket } from "./exhibit.js";
 import { parseSearchOpts } from "./search.js";
+import {
+  candidateFacts,
+  checkinWindows,
+  crossCheck,
+  effectiveStatus,
+  factLine,
+} from "./courtprep.js";
 
 function unknownDad() {
   const err = new Error("unknown dad");
@@ -115,6 +122,20 @@ export function noticeSayLine(text, eventType) {
   return `${said} Matter to you?`;
 }
 
+// Talk/text fork (Slice 4, locked): every intake offers ONE short fork —
+// the dad picks talk or text — and either way he gets the same feedback:
+// an ack, claim ≠ verified in plain words, and exactly one Next. Talk is
+// the dad speaking to Chip (Chip hands the vault the words); text is
+// typed. Same pipe, same rails, same outcome.
+export const FORK_LINE = "Want to tell me? Talk or text.";
+export const TELL_CHANNELS = ["talk", "text"];
+
+export function tellFeedback(nextAction) {
+  const next = nextAction ? stripPii(String(nextAction)).text.trim() : "";
+  const nextPart = next ? `Next: ${next.replace(/[.!?]+$/, "")}.` : "Next: tell me when something new happens.";
+  return `I heard you. It's kept as your account — not proof yet. ${nextPart}`;
+}
+
 /**
  * @param {object} vault
  * @param {{ tokenStore?: object }} [opts]
@@ -127,6 +148,85 @@ export function makeBff(vault, opts = {}) {
     if (!state) throw unknownDad();
     return state;
   }
+
+  // Court-prep capture (COURT_PREP_PRINCIPLES §2–§4). Runs AFTER the harm
+  // rail (callers never reach here on harm) on PII- and venom-stripped
+  // text: every keyword-hit sentence becomes one low-confidence candidate,
+  // cross-checked against stored OFW rows (read-only). Statement drops are
+  // money (Track 2, parked) and are not captured here.
+  async function captureCandidates(dad_id, text, source, opts = {}, source_event_id = null) {
+    const clean = stripVenom(stripPii(text).text);
+    const facts = candidateFacts(clean, opts.referenceDate ?? new Date());
+    if (facts.length === 0) return 0;
+    const ofw = await vault.listOfwPulls(dad_id);
+    for (const fact of facts) {
+      const check = crossCheck(fact, ofw);
+      await vault.insertCandidate(dad_id, {
+        ...fact,
+        source,
+        source_event_id,
+        status: check.status,
+        ofw_ref: check.ofw_ref,
+        line: factLine(fact, check),
+      });
+    }
+    // §5: the dad's words inside an open check-in window answer it.
+    await vault.completeOpenCheckins(dad_id, new Date(opts.now ?? Date.now()).toISOString());
+    log("candidates.capture", { dad: dad_id, source, n: facts.length });
+    return facts.length;
+  }
+
+  // Re-run the OFW stub over the dad's candidates (after a new OFW pull).
+  // Updates the candidate rows only — the OFW rows are never touched.
+  async function recheckCandidates(dad_id) {
+    const ofw = await vault.listOfwPulls(dad_id);
+    let changed = 0;
+    for (const c of await vault.listCandidates(dad_id)) {
+      const check = crossCheck(c, ofw);
+      const line = factLine(c, check);
+      if (check.status !== c.status || line !== c.line) {
+        await vault.updateCandidateCheck(dad_id, c.id, { ...check, line });
+        changed += 1;
+      }
+    }
+    log("candidates.recheck", { dad: dad_id, changed });
+    return changed;
+  }
+
+  const REVIEW_LABEL = { needs_reviewed: "Needs reviewed", kept: "Kept", tossed: "Tossed" };
+
+  function publicCandidate(c) {
+    return {
+      id: c.id,
+      what: c.what,
+      who: c.who ?? [],
+      when_text: c.when_text ?? null,
+      when_on: c.when_on ?? null,
+      kids: c.kids ?? [],
+      confidence: c.confidence ?? "low",
+      review: c.review ?? "needs_reviewed",
+      label: REVIEW_LABEL[c.review ?? "needs_reviewed"],
+      status: c.status,
+      line: c.line,
+      quote: c.quote ?? null,
+      source: c.source,
+      created_at: c.created_at,
+    };
+  }
+
+  function publicNotification(n, now) {
+    return {
+      id: n.id,
+      kind: n.kind,
+      slot: n.slot,
+      for_date: n.for_date,
+      title: n.title,
+      due_start: new Date(n.due_start).toISOString(),
+      due_end: new Date(n.due_end).toISOString(),
+      status: effectiveStatus(n, now),
+    };
+  }
+
 
   return {
     /** Durable (or memory) token store. Exposed for tests/docs only. */
@@ -180,6 +280,12 @@ export function makeBff(vault, opts = {}) {
         const say = noticeSayLine(text, event_types[0]);
         if (say) out.say = say;
       }
+      // Fork on every Chip intake (make_notice) — never on harm, where the
+      // only job is real help.
+      if (make_notice === true && !harmCheck(text)) out.fork = FORK_LINE;
+      if (!harmCheck(text) && (source ?? opts.source) !== "statement") {
+        await captureCandidates(dad_id, text, "intake", opts, event_ids[0] ?? null);
+      }
       return out;
     },
 
@@ -224,6 +330,7 @@ export function makeBff(vault, opts = {}) {
             kids: [],
           });
           out.written = 1;
+          await captureCandidates(dad_id, answer, "return", opts, rec.id);
           log("return.answer", { dad: dad_id, event: rec.id });
         }
       }
@@ -233,6 +340,137 @@ export function makeBff(vault, opts = {}) {
         answered: Boolean(typeof answer === "string" && answer.trim()),
       });
       return out;
+    },
+
+    // POST /vault/tell {dad_id, channel: "talk"|"text", story}
+    //   -> {written: 0|1, channel, feedback}
+    // The dad's answer to the fork. Rides the intake rails — harm first
+    // (heard → discarded, written:0, feedback null: Chip points to real
+    // help), then PII strip, then venom strip — and becomes exactly ONE
+    // claim event ('other', notes record the channel). Never verified.
+    // Feedback is identical for talk and text.
+    async postVaultTell({ dad_id, channel, story }, opts = {}) {
+      const state = await requireDad(dad_id);
+      if (!TELL_CHANNELS.includes(channel)) {
+        const err = new Error("channel must be talk or text");
+        err.status = 400;
+        throw err;
+      }
+      if (harmCheck(story)) {
+        return { written: 0, channel, feedback: null };
+      }
+      const cold = stripVenom(stripPii(story).text).trim();
+      const rec = await vault.insertEvent(dad_id, {
+        event_type: "other",
+        occurred_at: opts.referenceDate
+          ? new Date(opts.referenceDate).toISOString()
+          : new Date().toISOString(),
+        pipe: "claim",
+        raw_quote: cold || null,
+        notes: channel === "talk" ? "Told by talk" : "Told by text",
+        kids: [],
+      });
+      log("tell", { dad: dad_id, event: rec.id, channel });
+      await captureCandidates(dad_id, story, "tell", opts, rec.id);
+      return { written: 1, channel, feedback: tellFeedback(state.next_action) };
+    },
+
+    // GET /vault/candidates {dad_id} -> {candidates: [...]}
+    // Court-prep candidate facts, oldest first. Every one is claim / low
+    // confidence; status is not_proof_yet | matched | conflict and `line`
+    // is the one sentence the parent sees. Never verified.
+    // Sticky notes: every candidate starts "Needs reviewed". The dad keeps
+    // what's true and tosses junk; tossed notes are hidden here (pass
+    // include_tossed to see them) but never deleted.
+    async getVaultCandidates({ dad_id, include_tossed = false }) {
+      await requireDad(dad_id);
+      const rows = (await vault.listCandidates(dad_id)).filter(
+        (c) => include_tossed || (c.review ?? "needs_reviewed") !== "tossed",
+      );
+      log("candidates.list", { dad: dad_id, n: rows.length });
+      return {
+        needs_reviewed: rows.filter((c) => (c.review ?? "needs_reviewed") === "needs_reviewed").length,
+        candidates: rows.map(publicCandidate),
+      };
+    },
+
+    // POST /vault/candidates/review {dad_id, id, review: keep|toss}
+    // Keep ≠ true: a kept note is still the dad's account (claim, low,
+    // status untouched) — only OFW can make it match. Toss hides, never deletes.
+    async postCandidateReview({ dad_id, id, review }) {
+      await requireDad(dad_id);
+      const REVIEW = { keep: "kept", toss: "tossed" };
+      if (!REVIEW[review]) {
+        const err = new Error("review must be keep or toss");
+        err.status = 400;
+        throw err;
+      }
+      const rec = await vault.setCandidateReview(dad_id, id, REVIEW[review]);
+      if (!rec) {
+        const err = new Error("unknown candidate");
+        err.status = 404;
+        throw err;
+      }
+      log("candidates.review", { dad: dad_id, id, review: REVIEW[review] });
+      return publicCandidate(rec);
+    },
+
+    // POST /vault/checkins/ensure {dad_id, date?, tz_offset_minutes?}
+    //   -> {created, items}
+    // Idempotently creates the day's two check-in windows (morning 8–12,
+    // evening 18–22 local) as Notification items. Chip calls it at entry.
+    async postCheckinsEnsure({ dad_id, date, tz_offset_minutes }, opts = {}) {
+      await requireDad(dad_id);
+      const now = new Date(opts.now ?? Date.now());
+      const offset = tz_offset_minutes === undefined || tz_offset_minutes === null ? 0 : Number(tz_offset_minutes);
+      if (!Number.isInteger(offset) || Math.abs(offset) > 14 * 60) {
+        const err = new Error("tz_offset_minutes must be an integer within ±840");
+        err.status = 400;
+        throw err;
+      }
+      const forDate = date ?? new Date(now.getTime() + offset * 60_000).toISOString().slice(0, 10);
+      let windows;
+      try {
+        windows = checkinWindows(forDate, offset);
+      } catch {
+        const err = new Error("date must be YYYY-MM-DD");
+        err.status = 400;
+        throw err;
+      }
+      const created = await vault.ensureNotifications(dad_id, windows);
+      const items = (await vault.listNotifications(dad_id))
+        .filter((n) => n.for_date === forDate)
+        .map((n) => publicNotification(n, now));
+      log("checkins.ensure", { dad: dad_id, created });
+      return { created, items };
+    },
+
+    // GET /vault/notifications {dad_id} -> {unread, items}
+    // The Notifications tab: check-ins with due window + status
+    // (unread | read | done | missed — missed is computed past due_end).
+    async getVaultNotifications({ dad_id }, opts = {}) {
+      await requireDad(dad_id);
+      const now = new Date(opts.now ?? Date.now());
+      const items = (await vault.listNotifications(dad_id)).map((n) => publicNotification(n, now));
+      return { unread: items.filter((i) => i.status === "unread").length, items };
+    },
+
+    // POST /vault/notifications/mark {dad_id, id, status: read|done}
+    async postNotificationMark({ dad_id, id, status }, opts = {}) {
+      await requireDad(dad_id);
+      if (!["read", "done"].includes(status)) {
+        const err = new Error("status must be read or done");
+        err.status = 400;
+        throw err;
+      }
+      const rec = await vault.setNotificationStatus(dad_id, id, status);
+      if (!rec) {
+        const err = new Error("unknown notification");
+        err.status = 404;
+        throw err;
+      }
+      log("notifications.mark", { dad: dad_id, id, status });
+      return publicNotification(rec, new Date(opts.now ?? Date.now()));
     },
 
     // GET /vault/chip_entry {dad_id}
@@ -458,8 +696,13 @@ export function makeBff(vault, opts = {}) {
     // written:0, no row, no log line), then PII strip, then venom strip;
     // the draft lands as direction='draft', sent_at null, pipe='claim' —
     // never sent, never verified. NO send endpoint exists for drafts.
-    async postCommsDraft({ dad_id, body, kind }) {
+    async postCommsDraft({ dad_id, body, kind, on_record }) {
       await requireDad(dad_id);
+      if (on_record !== undefined && on_record !== null && typeof on_record !== "boolean") {
+        const err = new Error("on_record must be true or false");
+        err.status = 400;
+        throw err;
+      }
       if (kind !== undefined && kind !== null && kind !== "cold_ask") {
         const err = new Error("unknown draft kind");
         err.status = 400;
@@ -488,7 +731,10 @@ export function makeBff(vault, opts = {}) {
         draft_kind: kind ?? null,
         soft_grade,
       });
-      const mode = draftMode(cold);
+      // De-escalate vs document-this: the dad saying he wants this request
+      // ON THE RECORD forces document mode even when the wording heuristic
+      // misses it. on_record:false never downgrades a detected record ask.
+      const mode = on_record === true ? "document" : draftMode(cold);
       log("comms.draft", { dad: dad_id, id: rec.id, kind: kind ?? "none", grade: soft_grade, mode });
       return { written: 1, draft_id: rec.id, body: cold, soft_grade, mode, say: draftSayLine(mode) };
     },
@@ -518,6 +764,8 @@ export function makeBff(vault, opts = {}) {
         sent_at: sent_at ?? null,
         pipe: "verified",
       });
+      // A new OFW record may confirm or contradict earlier candidates.
+      if (channel === "ofw") await recheckCandidates(dad_id);
       return { id: rec.id };
     },
 

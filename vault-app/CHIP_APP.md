@@ -10,6 +10,7 @@ Never Supabase / Postgres direct. Fake family in demos only.
 | Chip | front door — one pipe per message | — |
 | Quill | vent → claim; notice line (`say`: "… Matter to you?") | `POST /vault/intake` + `make_notice` |
 | Coach / Tone | vent hot → one cold draft, draft ≠ send (`say`: "Not sent. Next: …") | `POST /vault/comms/draft` |
+| Quill — talk/text fork | "Want to tell me? Talk or text." → story → `feedback` | intake `fork` → `POST /vault/tell` |
 | Eddie | state / One Next | `GET /vault/state` |
 
 ## Two-object Chip (tenant bind)
@@ -91,6 +92,25 @@ Then re-`GET /vault/state` — chase items land in `missing`; `next_action` is t
 → 200 { "written": 1, "chase": [], "noticed_text": "<record copy>", "event_id": "<uuid>",
         "say": "They cancelled your Friday visit. Matter to you?" }
 ```
+
+**Talk/text fork (every Chip intake):** the `make_notice` reply also carries
+`"fork": "Want to tell me? Talk or text."` (absent only when harm was heard).
+Chip says it as the next beat — after the dad answers `say`, or at once when
+there is no `say`. The dad's pick goes to:
+
+```
+POST /vault/tell
+{ "dad_id": "<uuid>", "channel": "talk" | "text", "story": "<his words>" }
+→ 200 { "written": 1, "channel": "talk", "feedback": "I heard you. It's kept as your account — not proof yet. Next: …" }
+→ 200 { "written": 0, "channel": …, "feedback": null }   // harm heard: nothing kept, real help only
+→ 400 bad channel / empty story
+```
+
+One claim event ('other', notes "Told by talk" / "Told by text"), harm →
+PII → venom rails first, never verified. `feedback` is the same for talk
+and text: ack + claim ≠ verified in plain words + exactly one Next
+(`next_action`, spoken as words — never an OFW hop). Chip says it verbatim
+and stops.
 
 `say` is present only for a cancelled/denied visit: one plain noticed
 sentence + "Matter to you?" — no date, no claim jargon, no Next. Chip says
@@ -226,7 +246,7 @@ greeting `POST /vault/return` gives, but this GET **never stamps
 
 ```
 POST /vault/comms/draft
-{ "dad_id": "<uuid>", "body": "<cold ask text>", "kind"?: "cold_ask" }
+{ "dad_id": "<uuid>", "body": "<cold ask text>", "kind"?: "cold_ask", "on_record"?: true }
 → 200 { "written": 1, "draft_id": "<uuid>", "body": "<stripped>",
         "soft_grade": "ready" | "tighten",   // ready = nothing stripped for tone and ≤ 280 chars; tighten = venom came out or runs long (stored either way); absent when written:0
         "mode": "document" | "de_escalate",
@@ -237,6 +257,17 @@ POST /vault/comms/draft
 GET /vault/comms/drafts?dad_id=<uuid>
 → 200 [ { "draft_id", "body", "kind", "created_at" } ]   // drafts ONLY
 ```
+
+**Coach ≠ intake.** Coach's primary job is vent → one **sendable cold**
+draft. The noticed sentence ("They cancelled your Friday visit. Matter to
+you?") is Quill **intake** — a separate pipe, never Coach.
+
+**De-escalate vs document-this.** When the dad says he wants the request
+**on the record**, Chip sends `"on_record": true` with the draft: `mode`
+is then always `document` (Next: send it — it puts your ask on the
+record), even if the wording heuristic missed it. Without the flag the
+heuristic decides; `on_record: false` never downgrades a detected record
+ask. Same seat, same endpoint — no new seat.
 
 **Coach / Tone seat (vent hot → send cold).** When the dad asks for words
 ("help me say something calm…"), Chip writes ONE cold, OFW-ready draft and
@@ -252,6 +283,65 @@ Drafts are **never sent and never verified** (direction `draft`, no
 `sent_at`, claim pipe) — there is **no send endpoint** for drafts; sending
 stays a separate human decision via `/vault/comms/cold`. Harm → PII →
 venom rails run before anything is stored.
+
+### 10) Court-prep capture — Slice 13 (COURT_PREP_PRINCIPLES §2–§5)
+
+Automatic on every non-harm intake (except statement drops — Track 2),
+`/vault/tell`, and `/vault/return` answer: each keyword-hit sentence
+(event cue or day/time cue) becomes ONE **candidate fact** — structured
+`who / what / when_text / when_on / kids`, `confidence: "low"`, claim pipe
+only, dollar amounts masked `[amount]`. No response shape changes.
+
+**Sticky notes — "Needs reviewed".** To the dad each candidate is a
+sticky note: it starts **Needs reviewed**; he keeps what's true and
+tosses junk. Keeping does **not** make it proof — a kept note is still
+his account (claim, low, "not proof yet") until OFW agrees. Tossed notes
+are hidden, never deleted. Chip never asserts a note is true.
+
+```
+GET /vault/candidates?dad_id=<uuid>[&include_tossed=true]
+→ 200 { "needs_reviewed": N,
+        "candidates": [ { "id", "what", "who", "when_text", "when_on",
+        "kids", "confidence": "low",
+        "review": "needs_reviewed"|"kept"|"tossed", "label": "Needs reviewed"|"Kept"|"Tossed",
+        "status": "not_proof_yet" | "matched" | "conflict",
+        "line": "Yesterday: visit cancelled — your account, not proof yet.",
+        "quote", "source", "created_at" } ] }
+```
+
+```
+POST /vault/candidates/review { "dad_id", "id", "review": "keep" | "toss" }
+→ 200 <the note>   // 400 bad review, 404 not this dad's note
+```
+
+**OFW stub (§3):** compares candidates with a resolved day against the
+dad's stored OFW pulls (`POST /vault/comms/pull`, `channel: "ofw"`) — no
+live OFW. Same day + same reading → `matched` ("OFW shows the same.");
+same day + opposite reading → `conflict`, one line: "Yesterday: visit
+cancelled — OFW for 2026-09-25 shows they came. Check before you rely on
+it." OFW silent, no day, or not comparable → `not_proof_yet`. A new OFW
+pull re-checks the dad's candidates. OFW rows are read, **never written**;
+candidates never reach `verified_export`. Chip may say a `conflict` line
+once, verbatim — never a motive, never a verdict.
+
+**Check-ins / Notifications tab (§5):**
+
+```
+POST /vault/checkins/ensure { "dad_id", "date"?: "YYYY-MM-DD", "tz_offset_minutes"?: -240 }
+→ 200 { "created": 0|1|2, "items": [ … ] }      // idempotent per day + slot
+
+GET /vault/notifications?dad_id=<uuid>
+→ 200 { "unread": N, "items": [ { "id", "kind": "check_in", "slot": "morning"|"evening",
+        "for_date", "title", "due_start", "due_end",
+        "status": "unread"|"read"|"done"|"missed" } ] }
+
+POST /vault/notifications/mark { "dad_id", "id", "status": "read"|"done" }
+```
+
+Two windows a day — morning 8–12, evening 18–22 local (floor of one is
+always met). `missed` is computed past `due_end`. Any tell / intake /
+return answer inside an open window marks it `done`. No push — Chip calls
+`ensure` at entry and says an open, unread item's `title` once.
 
 ### Auth header
 
@@ -319,3 +409,17 @@ normal state early on. Chip's speakables stay `progress_line`, `missing_one`,
 ## Out of scope (this slice)
 
 Dad HTML redesign, OAuth/MFA, CloudAgent, spend, Nick real case data, Railway deploy.
+
+## Standing principles (court-prep / Chip conversation)
+
+Non-negotiable source rules for over-capture, keyword candidates, OFW
+cross-check, structured account facts, and proactive check-ins live in
+[`COURT_PREP_PRINCIPLES.md`](COURT_PREP_PRINCIPLES.md). Obey them; do not
+weaken in code or copy without Nick exact-yes.
+
+## Operating spine (Mamba principles)
+
+DDE product / Chip operating principles (process → craft, journey over
+result, learn from the greats, keep showing up) live in
+[`MAMBA_PRINCIPLES.md`](MAMBA_PRINCIPLES.md). Use that file — not the
+third-party “Bryant’s 10 Rules” poster list.
