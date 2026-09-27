@@ -11,7 +11,7 @@ import { openTokenStore } from "../src/tokens.js";
 import { createServer, listenServer } from "../src/server.js";
 import { FAILSAFE_SAY, isCleanComplete } from "../src/calmdraft.js";
 import { jsonReq } from "./auth-cases.js";
-import { FIXTURES, ROUND_TWO } from "./hot-vent-fixtures.js";
+import { EXPECTED, FIXTURES, FIXTURES_19B, ROUND_TWO } from "./hot-vent-fixtures.js";
 
 const url = databaseUrl();
 
@@ -51,6 +51,18 @@ test("PG hot vent: Round Two + five fixtures → calm complete drafts stored, fa
       rows[0].body_cold,
       "My weekend parenting time was cancelled again. Please let me know when we can schedule the make-up time. Thank you.",
     );
+
+    // 19b on Postgres: 3 more calm drafts, 2 no-draft routes (safety, worn-out).
+    for (const [key, vent] of Object.entries(FIXTURES_19B)) {
+      const r = await post(vent);
+      if (EXPECTED[key] === null) assert.equal(r.data.written, 0, key);
+      else assert.equal(r.data.body, EXPECTED[key], key);
+    }
+    const { rows: after } = await store.query(
+      `select count(*)::int as n from communications where dad_id = $1 and direction = 'draft'`,
+      [dad_id],
+    );
+    assert.equal(after[0].n, 9, "6 + 3 calm drafts; safety + worn-out stored nothing");
   } finally {
     await new Promise((r) => server.close(r));
     await store.close();

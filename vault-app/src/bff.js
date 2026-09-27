@@ -58,7 +58,7 @@ import {
   nextStep as legalNextStep,
   renderPacket as legalRenderPacket,
 } from "./legalintake.js";
-import { FAILSAFE_SAY, calmRewrite, hasHeat } from "./calmdraft.js";
+import { DEFEAT_SAY, FAILSAFE_SAY, SAFETY_SAY, calmRewrite, hasHeat, isDefeat, isSafetyReport } from "./calmdraft.js";
 import { LAWYER_LINE as TRANSLATOR_LAWYER_LINE, explain as translatorExplain } from "./translator.js";
 
 function unknownDad() {
@@ -1177,16 +1177,24 @@ export function makeBff(vault, opts = {}) {
       // off"): never strip-and-keep (that returned hot fragments). Build a
       // complete calm draft from the real issue + real ask, or fail safe:
       // no body, nothing stored, a plain say — the vent is never echoed.
+      // 19b: an impaired-care report (e.g. drunk at the exchange with the
+      // kids) is a safety matter — never a Coach draft to her.
+      if (isSafetyReport(piiClean)) {
+        log("comms.draft.safety", { dad: dad_id });
+        return { written: 0, rewritten: false, route: "safety", say: SAFETY_SAY };
+      }
       const rewritten = hasHeat(piiClean);
       let cold;
       let venomStripped = false;
+      let onRecord = false;
       if (rewritten) {
         const r = calmRewrite(piiClean);
         if (!r.ok) {
           log("comms.draft.failsafe", { dad: dad_id });
-          return { written: 0, rewritten: false, say: FAILSAFE_SAY };
+          return { written: 0, rewritten: false, say: isDefeat(piiClean) ? DEFEAT_SAY : FAILSAFE_SAY };
         }
         cold = r.body;
+        onRecord = r.on_record;
       } else {
         venomStripped = hasVenom(piiClean);
         cold = stripVenom(piiClean).trim();
@@ -1210,7 +1218,7 @@ export function makeBff(vault, opts = {}) {
       // De-escalate vs document-this: the dad saying he wants this request
       // ON THE RECORD forces document mode even when the wording heuristic
       // misses it. on_record:false never downgrades a detected record ask.
-      const mode = on_record === true ? "document" : draftMode(cold);
+      const mode = on_record === true || onRecord ? "document" : draftMode(cold);
       log("comms.draft", { dad: dad_id, id: rec.id, kind: kind ?? "none", grade: soft_grade, mode, rewritten: rewritten ? 1 : 0 });
       const out = { written: 1, draft_id: rec.id, body: cold, soft_grade, mode, say: draftSayLine(mode) };
       if (rewritten) out.rewritten = true;

@@ -252,7 +252,8 @@ POST /vault/comms/draft
         "mode": "document" | "de_escalate",
         "say": "Not sent. Next: …" }
 → 200 { "written": 0 }        // harm heard, or nothing survived the strips
-→ 200 { "written": 0, "rewritten": false, "say": "<plain line>" }   // hot vent, no clean message possible
+→ 200 { "written": 0, "rewritten": false, "say": "<plain line>" }   // hot vent, no clean message possible (or worn-out, nothing to send)
+→ 200 { "written": 0, "rewritten": false, "route": "safety", "say": "<plain line>" }   // impaired-care report: never a draft
 → 400 empty body / unknown kind
 ```
 
@@ -265,6 +266,15 @@ completely, there is **no body** — Chip says the `say` line only and
 never repeats the vent. Example: the Round Two vent becomes "My weekend
 parenting time was cancelled again. Please let me know when we can
 schedule the make-up time. Thank you."
+
+Slice 19b widens the heat to "poisoning them", "a lie", "hiding it from
+me", "losing my mind" and worn-out lines ("whatever… nobody listens"), and
+adds issues for adult topics the kids repeat, activities booked on the
+dad's time, and money taken from the kids' 529 / college fund (facts +
+statement ask, always on the record; unverified claims like "spent it on
+a vacation" are dropped). A report of impaired care (e.g. drunk at the
+exchange with the kids) is **never** drafted — `route: "safety"` and a
+say pointing to write it down and bring it to the lawyer.
 
 ```
 

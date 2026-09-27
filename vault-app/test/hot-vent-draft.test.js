@@ -150,3 +150,103 @@ test("pure rewriter: heat detection, pronoun-bearing asks fall back, validator r
   }
   assert.equal(isCleanComplete("The exchange started late. Please confirm the exchange time for next time. Thank you."), true);
 });
+
+// ---- Slice 19b — widen ------------------------------------------------------
+
+import { DEFEAT_SAY, SAFETY_SAY, isSafetyReport } from "../src/calmdraft.js";
+import { EXPECTED, FIXTURES_19B } from "./hot-vent-fixtures.js";
+
+const HOT_19B_RE =
+  /poison|a lie|losing my mind|on purpose|bad guy|hiding|vacation|spent|drunk|whatever|nobody listens|25th|slide/i;
+
+test("19b: all 10 fixtures → exact expected output (5 calm drafts from 19 + 3 drafts / 2 no-draft from 19b)", async () => {
+  const s = await start();
+  try {
+    const { dad_id, token } = (await jsonReq(s.base, "POST", "/vault/provision", {})).data;
+    const all = { ...FIXTURES, ...FIXTURES_19B };
+    assert.equal(Object.keys(all).length, 10);
+    for (const [key, vent] of Object.entries(all)) {
+      const r = await jsonReq(s.base, "POST", "/vault/comms/draft", { dad_id, body: vent }, { token });
+      assert.equal(r.status, 200, key);
+      if (EXPECTED[key] === null) {
+        assert.equal(r.data.written, 0, `${key}: no draft`);
+        assert.ok(!("body" in r.data), `${key}: no body`);
+      } else {
+        assert.equal(r.data.body, EXPECTED[key], key);
+        assertCalmComplete(r.data, vent);
+        assert.doesNotMatch(r.data.body, HOT_19B_RE, `${key}: no heat / motive / echo`);
+      }
+    }
+    assert.equal(s.vault.communications.filter((c) => c.sent_at).length, 0, "nothing sent");
+    assert.equal(s.vault.listDrafts(dad_id).length, 8, "exactly the 8 calm drafts stored");
+  } finally {
+    await s.close();
+  }
+});
+
+test("19b C1: 'poisoning' + 'a lie' → adult-topics draft, no motive, no argument about payments", async () => {
+  const s = await start();
+  try {
+    const { dad_id, token } = (await jsonReq(s.base, "POST", "/vault/provision", {})).data;
+    const r = await jsonReq(s.base, "POST", "/vault/comms/draft", { dad_id, body: FIXTURES_19B.c1_poisoning }, { token });
+    assert.equal(r.data.rewritten, true);
+    assert.doesNotMatch(r.data.body, /poison|lie|two years|every single/i);
+    assert.match(r.data.body, /away from the kids/);
+  } finally {
+    await s.close();
+  }
+});
+
+test("19b C2: the real ask (fall schedule) is kept; 'on purpose' / 'hiding' dropped; document mode", async () => {
+  const s = await start();
+  try {
+    const { dad_id, token } = (await jsonReq(s.base, "POST", "/vault/provision", {})).data;
+    const r = await jsonReq(s.base, "POST", "/vault/comms/draft", { dad_id, body: FIXTURES_19B.c2_schedule }, { token });
+    assert.match(r.data.body, /Please send me the fall schedule\./);
+    assert.equal(r.data.mode, "document");
+  } finally {
+    await s.close();
+  }
+});
+
+test("19b C3: drunk at the exchange with the kids → NO draft, safety say, nothing stored, not echoed", async () => {
+  const s = await start();
+  try {
+    const { dad_id, token } = (await jsonReq(s.base, "POST", "/vault/provision", {})).data;
+    const r = await jsonReq(s.base, "POST", "/vault/comms/draft", { dad_id, body: FIXTURES_19B.c3_safety }, { token });
+    assert.deepEqual(r.data, { written: 0, rewritten: false, route: "safety", say: SAFETY_SAY });
+    assert.doesNotMatch(SAFETY_SAY, /drunk|25th|911|police/i, "no echo, no invented emergency number");
+    assert.match(SAFETY_SAY, /lawyer/);
+    assert.equal(s.vault.communications.length, 0);
+    assert.equal(isSafetyReport("Confirming Thursday pickup time."), false);
+  } finally {
+    await s.close();
+  }
+});
+
+test("19b C4: worn-out 'whatever… nobody listens' → NO draft, gentle say, nothing stored", async () => {
+  const s = await start();
+  try {
+    const { dad_id, token } = (await jsonReq(s.base, "POST", "/vault/provision", {})).data;
+    const r = await jsonReq(s.base, "POST", "/vault/comms/draft", { dad_id, body: FIXTURES_19B.c4_defeat }, { token });
+    assert.deepEqual(r.data, { written: 0, rewritten: false, say: DEFEAT_SAY });
+    assert.doesNotMatch(DEFEAT_SAY, /whatever|nobody listens/i);
+    assert.equal(s.vault.communications.length, 0);
+  } finally {
+    await s.close();
+  }
+});
+
+test("19b C5: 529 withdrawal → facts + records ask, vacation claim dropped, on the record", async () => {
+  const s = await start();
+  try {
+    const { dad_id, token } = (await jsonReq(s.base, "POST", "/vault/provision", {})).data;
+    const r = await jsonReq(s.base, "POST", "/vault/comms/draft", { dad_id, body: FIXTURES_19B.c5_money }, { token });
+    assert.match(r.data.body, /four thousand dollars was taken out of the kids' 529 account in September\./);
+    assert.match(r.data.body, /Please send me the 529 account statement for September/);
+    assert.doesNotMatch(r.data.body, /vacation|spent|without telling/i, "unverified claim dropped");
+    assert.equal(r.data.mode, "document", "'I want it documented' → on the record");
+  } finally {
+    await s.close();
+  }
+});
