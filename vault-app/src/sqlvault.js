@@ -30,6 +30,12 @@ function litArr(arr) {
   return `array[${arr.map(lit).join(",")}]::text[]`;
 }
 
+// Dates come back as text so memory and Postgres rows compare the same.
+const CANDIDATE_COLS = `id, dad_id, pipe, created_at, source, source_event_id, quote, who, what,
+  when_text, to_char(when_on, 'YYYY-MM-DD') as when_on, kids, cues, confidence, status, ofw_ref, line`;
+const NOTIFICATION_COLS = `id, dad_id, created_at, kind, slot,
+  to_char(for_date, 'YYYY-MM-DD') as for_date, title, due_start, due_end, status`;
+
 export class SqlVault {
   constructor(exec) {
     this.exec = exec;
@@ -228,6 +234,96 @@ export class SqlVault {
     }
     log("state.provision", { table: "state", dad: dadId });
     return this.getState(dadId);
+  }
+
+  // ---- court-prep (vault/010_court_prep.sql) -------------------------------
+
+  async insertCandidate(dadId, row) {
+    const id = randomUUID();
+    const rows = await this.exec(
+      `insert into candidate_facts (id, dad_id, source, source_event_id, quote, who, what,
+                                    when_text, when_on, kids, cues, status, ofw_ref, line)
+       values (${lit(id)}, ${lit(dadId)}, ${lit(row.source)}, ${lit(row.source_event_id ?? null)},
+               ${lit(row.quote ?? null)}, ${litArr(row.who)}, ${lit(row.what)},
+               ${lit(row.when_text ?? null)}, ${lit(row.when_on ?? null)}, ${litArr(row.kids)},
+               ${litArr(row.cues)}, ${lit(row.status ?? "not_proof_yet")}, ${lit(row.ofw_ref ?? null)},
+               ${lit(row.line)})
+       returning ${CANDIDATE_COLS};`,
+    );
+    log("candidate.insert", { table: "candidate_facts", id, dad: dadId, status: row.status ?? "not_proof_yet" });
+    return rows?.[0] ?? { id, dad_id: dadId, ...row };
+  }
+
+  async listCandidates(dadId) {
+    return (
+      (await this.exec(
+        `select ${CANDIDATE_COLS} from candidate_facts
+          where dad_id = ${lit(dadId)} order by created_at, id;`,
+      )) ?? []
+    );
+  }
+
+  async updateCandidateCheck(dadId, id, { status, ofw_ref, line }) {
+    const rows = await this.exec(
+      `update candidate_facts set status = ${lit(status)}, ofw_ref = ${lit(ofw_ref ?? null)},
+              line = ${lit(line)}
+        where dad_id = ${lit(dadId)} and id = ${lit(id)}
+        returning ${CANDIDATE_COLS};`,
+    );
+    return rows?.[0] ?? null;
+  }
+
+  async listOfwPulls(dadId) {
+    return (
+      (await this.exec(
+        `select id, source_ref, body_cold, sent_at from communications
+          where dad_id = ${lit(dadId)} and direction = 'pull' and channel = 'ofw'
+            and pipe = 'verified';`,
+      )) ?? []
+    );
+  }
+
+  async ensureNotifications(dadId, items) {
+    let created = 0;
+    for (const it of items) {
+      const rows = await this.exec(
+        `insert into notifications (id, dad_id, kind, slot, for_date, title, due_start, due_end)
+         values (${lit(randomUUID())}, ${lit(dadId)}, ${lit(it.kind)}, ${lit(it.slot)},
+                 ${lit(it.for_date)}, ${lit(it.title)}, ${lit(it.due_start)}, ${lit(it.due_end)})
+         on conflict (dad_id, kind, for_date, slot) do nothing
+         returning id;`,
+      );
+      created += rows?.length ?? 0;
+    }
+    return created;
+  }
+
+  async listNotifications(dadId) {
+    return (
+      (await this.exec(
+        `select ${NOTIFICATION_COLS} from notifications
+          where dad_id = ${lit(dadId)} order by due_start, slot;`,
+      )) ?? []
+    );
+  }
+
+  async setNotificationStatus(dadId, id, status) {
+    const rows = await this.exec(
+      `update notifications set status = ${lit(status)}
+        where dad_id = ${lit(dadId)} and id = ${lit(id)}
+        returning ${NOTIFICATION_COLS};`,
+    );
+    return rows?.[0] ?? null;
+  }
+
+  async completeOpenCheckins(dadId, nowIso) {
+    const rows = await this.exec(
+      `update notifications set status = 'done'
+        where dad_id = ${lit(dadId)} and status <> 'done'
+          and due_start <= ${lit(nowIso)} and ${lit(nowIso)} <= due_end
+        returning id;`,
+    );
+    return rows?.length ?? 0;
   }
 
   async listEvents(dadId) {

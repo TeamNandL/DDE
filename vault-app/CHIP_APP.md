@@ -273,6 +273,52 @@ Drafts are **never sent and never verified** (direction `draft`, no
 stays a separate human decision via `/vault/comms/cold`. Harm → PII →
 venom rails run before anything is stored.
 
+### 10) Court-prep capture (COURT_PREP_PRINCIPLES §2–§5)
+
+Automatic on every non-harm intake (except statement drops — Track 2),
+`/vault/tell`, and `/vault/return` answer: each keyword-hit sentence
+(event cue or day/time cue) becomes ONE **candidate fact** — structured
+`who / what / when_text / when_on / kids`, `confidence: "low"`, claim pipe
+only, dollar amounts masked `[amount]`. No response shape changes.
+
+```
+GET /vault/candidates?dad_id=<uuid>
+→ 200 { "candidates": [ { "id", "what", "who", "when_text", "when_on",
+        "kids", "confidence": "low",
+        "status": "not_proof_yet" | "matched" | "conflict",
+        "line": "Yesterday: visit cancelled — your account, not proof yet.",
+        "quote", "source", "created_at" } ] }
+```
+
+**OFW stub (§3):** compares candidates with a resolved day against the
+dad's stored OFW pulls (`POST /vault/comms/pull`, `channel: "ofw"`) — no
+live OFW. Same day + same reading → `matched` ("OFW shows the same.");
+same day + opposite reading → `conflict`, one line: "Yesterday: visit
+cancelled — OFW for 2026-09-25 shows they came. Check before you rely on
+it." OFW silent, no day, or not comparable → `not_proof_yet`. A new OFW
+pull re-checks the dad's candidates. OFW rows are read, **never written**;
+candidates never reach `verified_export`. Chip may say a `conflict` line
+once, verbatim — never a motive, never a verdict.
+
+**Check-ins / Notifications tab (§5):**
+
+```
+POST /vault/checkins/ensure { "dad_id", "date"?: "YYYY-MM-DD", "tz_offset_minutes"?: -240 }
+→ 200 { "created": 0|1|2, "items": [ … ] }      // idempotent per day + slot
+
+GET /vault/notifications?dad_id=<uuid>
+→ 200 { "unread": N, "items": [ { "id", "kind": "check_in", "slot": "morning"|"evening",
+        "for_date", "title", "due_start", "due_end",
+        "status": "unread"|"read"|"done"|"missed" } ] }
+
+POST /vault/notifications/mark { "dad_id", "id", "status": "read"|"done" }
+```
+
+Two windows a day — morning 8–12, evening 18–22 local (floor of one is
+always met). `missed` is computed past `due_end`. Any tell / intake /
+return answer inside an open window marks it `done`. No push — Chip calls
+`ensure` at entry and says an open, unread item's `title` once.
+
 ### Auth header
 
 `Authorization: Bearer <token>` (preferred) or `X-DDE-Token: <token>`.
