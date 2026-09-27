@@ -45,7 +45,6 @@ Content-Type: application/json
 { "dad_id"?: "<uuid>" }   // omit → server mints uuid
 
 → 200 { "dad_id": "<uuid>", "token": "dde-stub-<uuid>",
-        "expires_at": "<iso, mint + 30 days>",
         "missing_one": "Kids school name",
         "progress_line": "0 of 5 this week; still open: Kids school name" }
 → 409 if that dad_id already provisioned
@@ -477,34 +476,54 @@ the real-dad gate is opened by Nick.
 
 ### Token lifecycle (Slice 20 — logout / revoke / expiry)
 
-Same gate as every dad route (404 / 401 / 403 above). A dead token can't
-log itself out — that's a `401`, not an error to retry.
+Premise: the dad almost never feels the token. He opens the app at least
+once a month → never sees a login. If he has to "get a token" by hand, it
+is designed wrong.
+
+**Logout is ALL-DEVICE.** Threat model: a device left at the other house,
+an ex who knows the password or shares the tablet. Single-device logout
+would leave that one alive, so there is none.
 
 ```
-POST /vault/logout        { "dad_id": "<uuid>" }  + Bearer
-→ 200 { "logged_out": true }   // ONLY the presented token dies
-
-POST /vault/token/revoke  { "dad_id": "<uuid>" }  + Bearer
-→ 200 { "revoked": <n> }       // EVERY token for this dad dies, caller's too
+POST /vault/logout   { "dad_id": "<uuid>" }  + Bearer
+POST /vault/panic    { "dad_id": "<uuid>" }  + Bearer      // same action, the dad's name for it
+→ 200 { "logged_out": true, "revoked": <n> }   // EVERY token this dad holds is dead, the caller's included
 ```
 
-**Expiry.** Every token expires `DDE_TOKEN_TTL_DAYS` (default **30**) after
-mint; provision returns `expires_at`. Tokens minted before Slice 20 (no
-`expires_at`) expire at `created_at` + TTL. Expired → `401 {"error":"token
-expired"}`; revoked / unknown → `401 {"error":"unauthorized"}`. Chip on
-either 401: stop, tell the dad his link needs a refresh — never retry, never
-provision again (provision on an existing dad is `409`).
+Same gate as every dad route (404 / 401 / 403 above): a dead token can't
+log itself out — that's a `401`, not something to retry. The dad hits panic
+from `/app`: **"Log out everywhere now"** under the intake box
+(`public/chip-entry.html`, `#btn_panic`). Chip can offer the same as a
+plain sentence ("Want to log out everywhere?") and call `/vault/panic`.
 
-**New token after logout / revoke / expiry: operator only.** No HTTP route
-mints or reissues. Operator runs, with the server's `DATABASE_URL` (or
-`DDE_TOKENS_PATH`):
+**Expiry: 30 days of INACTIVITY (sliding).** Every accepted request slides
+`last_seen_at` forward (rewritten at most once per 5 minutes per token);
+a token unused for `DDE_TOKEN_TTL_DAYS` (default **30**) dies. Expired →
+`401 {"error":"token expired"}` and the row is revoked on the spot, so the
+death is permanent. Revoked / unknown → `401 {"error":"unauthorized"}`.
+Chip on either 401: stop, tell the dad his link needs a refresh from Nick —
+never retry, never provision again (provision on an existing dad is `409`).
+
+**Revoke is Nick-only.** No HTTP route revokes or mints; the CLI runs where
+the server's `DATABASE_URL` (or `DDE_TOKENS_PATH`) lives:
 
 ```
-npm run token:reissue -- --dad-id <uuid>   # revoke all, print one fresh token + expires_at
+npm run token:reissue -- --dad-id <uuid>   # revoke all, print ONE fresh token once
 npm run token:revoke  -- --dad-id <uuid>   # revoke all (lost phone / leaked link)
 ```
 
-Revoke never touches vault data — only tokens.
+Revoke never touches vault data — only tokens. **No password exists in this
+repo** (bearer only, no login page); the "password change voids every
+session" rule maps to `token:reissue`, which is exactly that: kill all,
+mint one.
+
+**Masking.** A token or dad_id is never shown or logged in full — last 4
+only (`…a1b2`), enforced centrally in `src/logger.js` `mask()` and in the
+CLI. Only `token:reissue` prints a raw token, once, to the operator.
+
+**Cutover.** Shipping this logs nobody out: existing tokens get
+`last_seen_at = now()` at the first boot and roll onto the 30-day rule from
+there. Rollback: see `HOSTING.md` → *Rollback (Slice 20)*.
 
 ## Chip deep-link entry (minimal HTML)
 

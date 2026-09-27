@@ -47,9 +47,10 @@ export function routeCases(dad_id, ctx = {}) {
     ["POST", "/vault/comms/pull", { dad_id, channel: "ofw", source_ref: "ofw:alex:1", body_cold: "Pickup confirmed.", sent_at: "2026-09-20T17:00:00Z" }],
     ["GET", q("/vault/export/verified")],
     ["GET", q("/vault/search", "&q=pickup")],
-    // Slice 20 — these kill tokens, so they run last and on a fresh token.
+    // Slice 20 — these kill every token for the dad, so they run last and
+    // each on a freshly minted token.
     ["POST", "/vault/logout", { dad_id }, undefined, true],
-    ["POST", "/vault/token/revoke", { dad_id }, undefined, true],
+    ["POST", "/vault/panic", { dad_id }, undefined, true],
   ].map(([method, path, body, after, consumes = false]) => ({ method, path, body, after, consumes }));
 }
 

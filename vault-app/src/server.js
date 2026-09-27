@@ -74,7 +74,7 @@ export const PHASE1_ROUTES = [
   "GET /vault/export/verified",
   "GET /vault/search",
   "POST /vault/logout",
-  "POST /vault/token/revoke",
+  "POST /vault/panic",
 ];
 
 function json(res, status, body) {
@@ -217,20 +217,15 @@ export async function handleBffRequest(bff, req, url, body) {
   }
 
   // Token lifecycle (Slice 20). Same gate as every dad route: a dead token
-  // can't log itself out (401). Logout = this token only; revoke = all of
-  // this dad's tokens. New token after either: operator reissue (CLI).
-  if (method === "POST" && path === "/vault/logout") {
+  // can't log itself out (401). Logout is ALL-DEVICE; /vault/panic is the
+  // same action under the name the dad sees ("log out everywhere now").
+  // No dad-facing revoke route: revoke is Nick-only (src/cli-token.js).
+  // New token after logout: operator reissue (CLI).
+  if (method === "POST" && (path === "/vault/logout" || path === "/vault/panic")) {
     const dad_id = requireDadId(body.dad_id);
     await gateDad(bff, req, dad_id);
-    log("http.logout", { dad: dad_id });
-    return { status: 200, body: await bff.postVaultLogout({ dad_id, token: extractToken(req) }) };
-  }
-
-  if (method === "POST" && path === "/vault/token/revoke") {
-    const dad_id = requireDadId(body.dad_id);
-    await gateDad(bff, req, dad_id);
-    log("http.token_revoke", { dad: dad_id });
-    return { status: 200, body: await bff.postVaultTokenRevoke({ dad_id }) };
+    log(path === "/vault/panic" ? "http.panic" : "http.logout", { dad: dad_id });
+    return { status: 200, body: await bff.postVaultLogout({ dad_id }) };
   }
 
   if (method === "POST" && path === "/vault/intake") {

@@ -80,13 +80,68 @@ passes and Nick gives an exact yes.
 ## Token lifecycle (Slice 20)
 
 Optional env: `DDE_TOKEN_TTL_DAYS` (default `30`; non-positive / non-numeric
-→ 30). Boot adds `expires_at` to `dde_provision_tokens` (idempotent
-`add column if not exists`); existing tokens expire at `created_at` + TTL,
-so tokens older than the TTL stop working on the first deploy — reissue them.
+→ 30). Expiry is **30 days of inactivity** (sliding on use), not 30 days
+from mint. Logout is all-device (`POST /vault/logout` = `POST /vault/panic`).
 
-Operator commands (run where the server's `DATABASE_URL` is set):
+Boot adds `last_seen_at` to `dde_provision_tokens` (idempotent
+`add column if not exists`) and backfills every existing row to `now()`.
+**Nobody is logged out by the deploy**: every token that exists keeps
+working and starts its 30-day inactivity clock at that boot.
 
-    npm run token:revoke  -- --dad-id <uuid>
-    npm run token:reissue -- --dad-id <uuid>   # prints the new token once
+Nick-only commands (run where the server's `DATABASE_URL` is set; there is
+no HTTP equivalent):
+
+    npm run token:revoke     -- --dad-id <uuid>   # every token for one dad
+    npm run token:reissue    -- --dad-id <uuid>   # revoke all, print one fresh token once
+    npm run token:sweep                            # durably revoke every token idle > TTL
+    npm run token:revoke-all -- --yes              # NUCLEAR: every token, every dad
+
+Output masks tokens and dad_ids to their last 4; only `reissue` prints a
+raw token, once.
 
 Proof: `DATABASE_URL=... node --test test/token-lifecycle.test.js test/token-lifecycle.pg.test.js`
+
+### Rollback (Slice 20)
+
+There is **no signing key** in this system. Tokens are random opaque
+strings; the only truth is the `dde_provision_tokens` row, and 476ff09
+already honors `revoked_at` (its lookup is `where token_hash = $1 and
+revoked_at is null`). So:
+
+| Token state at rollback | Fate under 476ff09 | Why |
+| --- | --- | --- |
+| Logged out / panicked / Nick-revoked | **stays dead** | written as `revoked_at`, which 476ff09 checks |
+| Expired and presented since | **stays dead** | expiry is written as `revoked_at` the moment it is seen |
+| Idle > 30 days but never presented | **would revive** (476ff09 has no expiry) | `revoked_at` still null |
+
+The "rotate the signing key" step is therefore a row rotation. One-step
+rollback, in this order:
+
+1. Kill every pre-rollback token so none can be replayed under the old code
+   (this is the key rotation — every dad gets a fresh link from Nick):
+
+       cd vault-app && DATABASE_URL=... npm run token:revoke-all -- --yes
+
+   Softer alternative when the fleet is small and no compromise is
+   suspected: `npm run token:sweep` only, which durably revokes the
+   never-presented idle tokens and leaves active dads logged in.
+2. Deploy 476ff09 (`git checkout 476ff09` → build → deploy; same
+   `DATABASE_URL`). The extra `last_seen_at` column is ignored by 476ff09
+   and harmless; on a later roll-forward the ensure step backfills any
+   null it left.
+3. `token:reissue` each dad you killed in step 1 and send the new link.
+
+Proof the revoked rows are dead under the old code: `test/token-lifecycle.pg.test.js`
+runs 476ff09's lookup SQL verbatim after logout / expiry / sweep and asserts
+no row comes back.
+
+### 3-minute post-deploy check (fake dad only)
+
+    B=https://<host>
+    P=$(curl -s -X POST $B/vault/provision -H 'content-type: application/json' -d '{}')
+    D=$(echo "$P" | jq -r .dad_id); T=$(echo "$P" | jq -r .token)
+    curl -s -o /dev/null -w '%{http_code}\n' "$B/vault/state?dad_id=$D" -H "Authorization: Bearer $T"     # 200
+    curl -s -X POST $B/vault/logout -H "Authorization: Bearer $T" -H 'content-type: application/json' -d "{\"dad_id\":\"$D\"}"   # {"logged_out":true,"revoked":1}
+    curl -s -o /dev/null -w '%{http_code}\n' "$B/vault/state?dad_id=$D" -H "Authorization: Bearer $T"     # 401 — old token rejected
+
+Then `npm run token:revoke -- --dad-id $D` to retire the fake dad's row.
