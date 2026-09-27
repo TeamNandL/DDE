@@ -251,33 +251,38 @@ POST /vault/comms/draft
         "soft_grade": "ready" | "tighten",   // ready = nothing stripped for tone and ≤ 280 chars; tighten = venom came out or runs long (stored either way); absent when written:0
         "mode": "document" | "de_escalate",
         "say": "Not sent. Next: …" }
-→ 200 { "written": 0 }        // harm heard, or nothing survived the strips
-→ 200 { "written": 0, "rewritten": false, "say": "<plain line>" }   // hot vent, no clean message possible (or worn-out, nothing to send)
-→ 200 { "written": 0, "rewritten": false, "route": "safety", "say": "<plain line>" }   // impaired-care report: never a draft
+→ 200 { "written": 0 }        // harm heard
+→ 200 { "written": 0, "rewritten": false, "say": "<plain line>" }   // no clean, complete message possible
+→ 200 { "written": 0, "rewritten": false, "route": "safety", "say": "…", "facts": [...] }   // impaired-care report: never a draft
+→ 200 { "written": 0, "rewritten": false, "route": "check_in", "say": "…" }   // worn-out / hopeless: no draft, human check-in
 → 400 empty body / unknown kind
 ```
 
-**Hot vent (Slice 19).** When the body has heat — swearing, diagnosing
-the other parent (narcissist / alienating / motive), or "tell her off" —
-the draft is **rebuilt**, never strip-and-kept: the real issue (behavior
-only) + the dad's real ask (or the issue's default ask) + "Thank you.",
-returned with `rewritten: true`. If that can't be done cleanly and
-completely, there is **no body** — Chip says the `say` line only and
-never repeats the vent. Example: the Round Two vent becomes "My weekend
-parenting time was cancelled again. Please let me know when we can
-schedule the make-up time. Thank you."
+**Every draft is rewritten (Slice 19 + 19b).** No heat gate: the body is
+never the dad's input and never a slice of it. A known issue (cancelled
+time, late exchange, info not shared, adult topics the kids repeat,
+activities on the dad's time, 529 / college-fund withdrawal) is rebuilt
+from a behavior-only template that keeps concrete facts — dates, times,
+durations, counts, amounts, notice, the real ask — and drops swearing,
+insults and motive ("poisoning", "on purpose", "alienating",
+"narcissist", "hiding", "make me look like…"). Anything else keeps every
+clean, complete sentence the dad wrote plus "Thank you."; heat sentences
+are dropped whole. If nothing clean and complete is left: no body, the
+fail-safe `say`, nothing stored — Chip never repeats the vent.
 
-Slice 19b widens the heat to "poisoning them", "a lie", "hiding it from
-me", "losing my mind" and worn-out lines ("whatever… nobody listens"), and
-adds issues for adult topics the kids repeat, activities booked on the
-dad's time, and money taken from the kids' 529 / college fund (facts +
-statement ask, always on the record; unverified claims like "spent it on
-a vacation" are dropped). A report of impaired care (e.g. drunk at the
-exchange with the kids) is **never** drafted — `route: "safety"` and a
-say pointing to write it down and bring it to the lawyer.
+- Safety (e.g. drunk at the exchange with the kids): `say` is exactly
+  "This is serious. Document it exactly as it happened and take it to your
+  lawyer before you send anything to her." `facts` lists what to write
+  down (for the dad, not for her). No draft.
+- Worn-out ("whatever… nobody listens"): `say` is a human check-in —
+  "Sounds like a rough night. There's no message to send here - I just
+  want to make sure you're alright. What's going on?" No draft.
+
+Example: the Round Two vent becomes "My weekend parenting time was
+cancelled again. Please let me know when we can schedule the make-up
+time. Thank you."
 
 ```
-
 GET /vault/comms/drafts?dad_id=<uuid>
 → 200 [ { "draft_id", "body", "kind", "created_at" } ]   // drafts ONLY
 ```

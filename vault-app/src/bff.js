@@ -58,7 +58,7 @@ import {
   nextStep as legalNextStep,
   renderPacket as legalRenderPacket,
 } from "./legalintake.js";
-import { DEFEAT_SAY, FAILSAFE_SAY, SAFETY_SAY, calmRewrite, hasHeat, isDefeat, isSafetyReport } from "./calmdraft.js";
+import { DEFEAT_SAY, FAILSAFE_SAY, SAFETY_SAY, coach } from "./calmdraft.js";
 import { LAWYER_LINE as TRANSLATOR_LAWYER_LINE, explain as translatorExplain } from "./translator.js";
 
 function unknownDad() {
@@ -1177,35 +1177,32 @@ export function makeBff(vault, opts = {}) {
       // off"): never strip-and-keep (that returned hot fragments). Build a
       // complete calm draft from the real issue + real ask, or fail safe:
       // no body, nothing stored, a plain say — the vent is never echoed.
-      // 19b: an impaired-care report (e.g. drunk at the exchange with the
-      // kids) is a safety matter — never a Coach draft to her.
-      if (isSafetyReport(piiClean)) {
+      // 19b: EVERY draft goes through the calm rewrite — no heat gate. The
+      // body is never the dad's input or a slice of it. Safety reports and
+      // worn-out vents are never drafted; anything that can't become one
+      // clean, complete message fails safe (no body, nothing stored).
+      const r = coach(piiClean);
+      if (r.kind === "safety") {
         log("comms.draft.safety", { dad: dad_id });
-        return { written: 0, rewritten: false, route: "safety", say: SAFETY_SAY };
+        return { written: 0, rewritten: false, route: "safety", say: SAFETY_SAY, facts: r.facts };
       }
-      const rewritten = hasHeat(piiClean);
-      let cold;
-      let venomStripped = false;
-      let onRecord = false;
-      if (rewritten) {
-        const r = calmRewrite(piiClean);
-        if (!r.ok) {
-          log("comms.draft.failsafe", { dad: dad_id });
-          return { written: 0, rewritten: false, say: isDefeat(piiClean) ? DEFEAT_SAY : FAILSAFE_SAY };
-        }
-        cold = r.body;
-        onRecord = r.on_record;
-      } else {
-        venomStripped = hasVenom(piiClean);
-        cold = stripVenom(piiClean).trim();
+      if (r.kind === "defeat") {
+        log("comms.draft.checkin", { dad: dad_id });
+        return { written: 0, rewritten: false, route: "check_in", say: DEFEAT_SAY };
       }
-      if (!cold) {
-        // Nothing storable survived the strips (pure venom) — no row.
-        return { written: 0 };
+      if (r.kind !== "draft") {
+        log("comms.draft.failsafe", { dad: dad_id });
+        return { written: 0, rewritten: false, say: FAILSAFE_SAY };
       }
+      const cold = r.body;
+      const onRecord = r.on_record;
+      // Template rebuilds are send-ready; the kept-sentence path grades
+      // "tighten" when heat was dropped (the dad's words changed).
+      const venomStripped = r.topic === "kept" && r.dropped;
       // Grade from the PRE-strip knowledge, persisted with the row so
       // reads return the same grade the POST did.
-      const soft_grade = draftSoftGrade(cold, venomStripped);
+      // Graded on the dad's own kept words (r.core), not the added "Thank you."
+      const soft_grade = draftSoftGrade(r.core, venomStripped);
       const rec = await vault.insertCommunication(dad_id, {
         direction: "draft",
         channel: null,
@@ -1219,10 +1216,8 @@ export function makeBff(vault, opts = {}) {
       // ON THE RECORD forces document mode even when the wording heuristic
       // misses it. on_record:false never downgrades a detected record ask.
       const mode = on_record === true || onRecord ? "document" : draftMode(cold);
-      log("comms.draft", { dad: dad_id, id: rec.id, kind: kind ?? "none", grade: soft_grade, mode, rewritten: rewritten ? 1 : 0 });
-      const out = { written: 1, draft_id: rec.id, body: cold, soft_grade, mode, say: draftSayLine(mode) };
-      if (rewritten) out.rewritten = true;
-      return out;
+      log("comms.draft", { dad: dad_id, id: rec.id, kind: kind ?? "none", grade: soft_grade, mode, topic: r.topic });
+      return { written: 1, draft_id: rec.id, body: cold, soft_grade, mode, say: draftSayLine(mode), rewritten: true };
     },
 
     // GET /vault/comms/drafts {dad_id} -> [{draft_id, body, kind, created_at}]

@@ -32,14 +32,16 @@ export const FIXTURES_19B = {
 
 // The exact expected output for all 10 (5 Slice 19 + 5 Slice 19b).
 export const EXPECTED = {
-  swearing: "The exchange started late. Please confirm the exchange time for next time. Thank you.",
+  swearing: "The exchange started 45 minutes late. Please confirm the exchange time for next time. Thank you.",
   diagnosis: "I haven't received the kids' school information. Please send me the school information. Thank you.",
-  tell_off: "My visit with the kids was cancelled. Please let me know when we can schedule the make-up time. Thank you.",
-  cancelled_time: "My weekend parenting time was cancelled again. Please let me know when we can schedule the make-up time. Thank you.",
+  tell_off:
+    "My visit with the kids on Saturday was cancelled with one hour's notice. Please let me know when we can schedule the make-up time. Thank you.",
+  cancelled_time:
+    "My weekend parenting time was cancelled again, the third weekend in a row. Please let me know when we can schedule the make-up time. Thank you.",
   request_in_anger:
     "I haven't received the kids' dentist appointment information. Please send me the dentist appointment dates for October. Thank you.",
   c1_poisoning:
-    "The kids came back repeating things about money and support. Please keep adult topics like support between us and away from the kids. Thank you.",
+    "The kids came back repeating things about money and support. I have paid every support payment on time for the past two years. Please keep adult topics like support between us and away from the kids. Thank you.",
   c2_schedule: "The boys' soccer is scheduled during my weekends. Please send me the fall schedule. Thank you.",
   c3_safety: null, // no draft — safety say
   c4_defeat: null, // no draft — worn-out say

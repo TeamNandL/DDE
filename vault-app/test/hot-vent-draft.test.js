@@ -71,7 +71,7 @@ test("five heat fixtures → one complete calm draft each, real issue kept", asy
 
     const swearing = await post(FIXTURES.swearing);
     assertCalmComplete(swearing, FIXTURES.swearing);
-    assert.match(swearing.body, /^The exchange started late\./);
+    assert.match(swearing.body, /^The exchange started 45 minutes late\./, "fact kept: 45 minutes");
 
     const diagnosis = await post(FIXTURES.diagnosis);
     assertCalmComplete(diagnosis, FIXTURES.diagnosis);
@@ -79,11 +79,11 @@ test("five heat fixtures → one complete calm draft each, real issue kept", asy
 
     const tellOff = await post(FIXTURES.tell_off);
     assertCalmComplete(tellOff, FIXTURES.tell_off);
-    assert.match(tellOff.body, /^My visit with the kids was cancelled\./);
+    assert.match(tellOff.body, /^My visit with the kids on Saturday was cancelled with one hour's notice\./, "day + notice kept");
 
     const cancelled = await post(FIXTURES.cancelled_time);
     assertCalmComplete(cancelled, FIXTURES.cancelled_time);
-    assert.match(cancelled.body, /parenting time was cancelled again\./);
+    assert.match(cancelled.body, /parenting time was cancelled again, the third weekend in a row\./, "count kept");
     assert.match(cancelled.body, /make-up time/);
 
     const ask = await post(FIXTURES.request_in_anger);
@@ -107,7 +107,7 @@ test("request in anger + on_record:true → document mode, real ask kept", async
       { token },
     );
     assert.equal(r.data.mode, "document");
-    assert.equal(r.data.body, "Please add the kids' dentist appointments to the shared calendar. Thank you.");
+    assert.equal(r.data.body, "Can you please add the kids' dentist appointments to the shared calendar? Thank you.");
     assert.match(r.data.say, /on the record/);
   } finally {
     await s.close();
@@ -190,7 +190,8 @@ test("19b C1: 'poisoning' + 'a lie' → adult-topics draft, no motive, no argume
     const { dad_id, token } = (await jsonReq(s.base, "POST", "/vault/provision", {})).data;
     const r = await jsonReq(s.base, "POST", "/vault/comms/draft", { dad_id, body: FIXTURES_19B.c1_poisoning }, { token });
     assert.equal(r.data.rewritten, true);
-    assert.doesNotMatch(r.data.body, /poison|lie|two years|every single/i);
+    assert.doesNotMatch(r.data.body, /poison|\blie\b|every single|I know it/i);
+    assert.match(r.data.body, /every support payment on time for the past two years/, "concrete fact kept");
     assert.match(r.data.body, /away from the kids/);
   } finally {
     await s.close();
@@ -214,7 +215,17 @@ test("19b C3: drunk at the exchange with the kids → NO draft, safety say, noth
   try {
     const { dad_id, token } = (await jsonReq(s.base, "POST", "/vault/provision", {})).data;
     const r = await jsonReq(s.base, "POST", "/vault/comms/draft", { dad_id, body: FIXTURES_19B.c3_safety }, { token });
-    assert.deepEqual(r.data, { written: 0, rewritten: false, route: "safety", say: SAFETY_SAY });
+    assert.deepEqual(r.data, {
+      written: 0,
+      rewritten: false,
+      route: "safety",
+      say: SAFETY_SAY,
+      facts: ["Friday the 25th", "at the exchange", "the kids were in the car", "what you saw: drunk"],
+    });
+    assert.equal(
+      SAFETY_SAY,
+      "This is serious. Document it exactly as it happened and take it to your lawyer before you send anything to her.",
+    );
     assert.doesNotMatch(SAFETY_SAY, /drunk|25th|911|police/i, "no echo, no invented emergency number");
     assert.match(SAFETY_SAY, /lawyer/);
     assert.equal(s.vault.communications.length, 0);
@@ -229,7 +240,9 @@ test("19b C4: worn-out 'whatever… nobody listens' → NO draft, gentle say, no
   try {
     const { dad_id, token } = (await jsonReq(s.base, "POST", "/vault/provision", {})).data;
     const r = await jsonReq(s.base, "POST", "/vault/comms/draft", { dad_id, body: FIXTURES_19B.c4_defeat }, { token });
-    assert.deepEqual(r.data, { written: 0, rewritten: false, say: DEFEAT_SAY });
+    assert.deepEqual(r.data, { written: 0, rewritten: false, route: "check_in", say: DEFEAT_SAY });
+    assert.match(DEFEAT_SAY, /^Sounds like a rough night\. There's no message to send here/);
+    assert.match(DEFEAT_SAY, /What's going on\?$/);
     assert.doesNotMatch(DEFEAT_SAY, /whatever|nobody listens/i);
     assert.equal(s.vault.communications.length, 0);
   } finally {
@@ -248,5 +261,41 @@ test("19b C5: 529 withdrawal → facts + records ask, vacation claim dropped, on
     assert.equal(r.data.mode, "document", "'I want it documented' → on the record");
   } finally {
     await s.close();
+  }
+});
+
+import { coach, echoesInput } from "../src/calmdraft.js";
+
+test("19b rule: every message is rewritten — body never equals the input or is a slice of it", () => {
+  const inputs = [
+    ROUND_TWO,
+    ...Object.values(FIXTURES),
+    ...Object.values(FIXTURES_19B),
+    "Confirming Thursday pickup time.",
+    "Draft only.",
+    "Confirming pickup at 5. Thank you.",
+    "Noted. I'll be at the exchange at 6.",
+    "She is toxic. Meet Saturday at ten.",
+    "The pickup plan has changed at the last minute several times. Can we keep the agreed pickup time? Please confirm in writing.",
+  ];
+  for (const input of inputs) {
+    const r = coach(input);
+    if (r.kind !== "draft") continue;
+    assert.ok(!echoesInput(r.body, input), `echo/slice of input: ${r.body}`);
+    assert.notEqual(r.body, input);
+    assert.ok(!input.includes(r.body));
+  }
+  assert.equal(coach("Confirming pickup at 5. Thank you.").body, "Hi. Confirming pickup at 5. Thank you.");
+  assert.equal(coach("I am so fucking done.").kind, "fail", "Round Two fragment can never come back");
+});
+
+test("19b facts regression: '45 minutes' and 'third weekend in a row' survive; motive words never do", () => {
+  assert.match(coach(FIXTURES.swearing).body, /45 minutes/);
+  assert.match(coach(FIXTURES.cancelled_time).body, /third weekend in a row/);
+  for (const v of [...Object.values(FIXTURES), ...Object.values(FIXTURES_19B)]) {
+    const r = coach(v);
+    if (r.kind === "draft") {
+      assert.doesNotMatch(r.body, /poison|on purpose|alienat|narcissis|hiding|deliberately|look like|control everything/i);
+    }
   }
 });
