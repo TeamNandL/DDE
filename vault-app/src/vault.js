@@ -79,6 +79,8 @@ export class Vault {
     this.notifications = []; // court-prep check-ins
     this.plan_topics = []; // parenting plan checklist (Slice 14)
     this.plan_drafts = []; // bot-owned versioned drafts
+    this.translations = []; // process translator (Slice 15)
+    this.translator_calendar_candidates = []; // private_only, claim ≠ verified
   }
 
   insertEvent(dadId, row) {
@@ -464,6 +466,71 @@ export class Vault {
   latestPlanDraft(dadId, kind) {
     const rows = this.plan_drafts.filter((d) => d.dad_id === dadId && d.kind === kind);
     return rows.sort((a, b) => b.version - a.version)[0] ?? null;
+  }
+
+  // ---- process translator (vault/012_process_translator.sql twin) ----------
+
+  insertTranslation(dadId, t, candidates = []) {
+    const rec = {
+      id: randomUUID(),
+      dad_id: dadId,
+      created_at: new Date().toISOString(),
+      input_kind: t.input_kind,
+      input_cold: t.input_cold,
+      term_keys: [...t.term_keys],
+      verdict_request: Boolean(t.verdict_request),
+      clock_flag: Boolean(t.clock_flag),
+      result: t.result,
+    };
+    this.translations.push(rec);
+    const cands = candidates.map((c) => {
+      const row = {
+        id: randomUUID(),
+        dad_id: dadId,
+        translation_id: rec.id,
+        created_at: rec.created_at,
+        label: c.label,
+        date_text: c.date_text,
+        on_date: c.on_date ?? null,
+        visibility: "private_only",
+        status: "candidate",
+      };
+      this.translator_calendar_candidates.push(row);
+      return row;
+    });
+    log("translate.insert", { table: "translations", id: rec.id, dad: dadId, kind: t.input_kind, cands: cands.length });
+    return { ...rec, calendar_candidates: cands };
+  }
+
+  _withCands(rec) {
+    if (!rec) return null;
+    const cands = this.translator_calendar_candidates.filter((c) => c.translation_id === rec.id);
+    return { ...rec, calendar_candidates: cands };
+  }
+
+  getTranslation(dadId, id) {
+    return this._withCands(this.translations.find((t) => t.dad_id === dadId && t.id === id));
+  }
+
+  lastTranslation(dadId) {
+    const rows = this.translations.filter((t) => t.dad_id === dadId);
+    return this._withCands(rows[rows.length - 1]);
+  }
+
+  listTranslations(dadId, limit = 20) {
+    return this.translations
+      .filter((t) => t.dad_id === dadId)
+      .slice()
+      .reverse()
+      .slice(0, limit)
+      .map((t) => ({
+        id: t.id,
+        created_at: t.created_at,
+        input_kind: t.input_kind,
+        term_keys: [...t.term_keys],
+        verdict_request: t.verdict_request,
+        clock_flag: t.clock_flag,
+      }));
   }
 
   // Read helpers used by spreadsheet views (same names as SqlVault).

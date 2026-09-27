@@ -36,6 +36,11 @@ const CANDIDATE_COLS = `id, dad_id, pipe, created_at, source, source_event_id, q
 const NOTIFICATION_COLS = `id, dad_id, created_at, kind, slot,
   to_char(for_date, 'YYYY-MM-DD') as for_date, title, due_start, due_end, status`;
 
+const TRANSLATION_COLS = `id, dad_id, created_at, input_kind, input_cold, term_keys, verdict_request,
+  clock_flag, result`;
+const TRANSLATOR_CAND_COLS = `id, dad_id, translation_id, created_at, label, date_text,
+  to_char(on_date, 'YYYY-MM-DD') as on_date, visibility, status`;
+
 const PLAN_TOPIC_COLS = `dad_id, topic_key, position, status, choice, detail, stance, depth,
   example_shown, updated_at`;
 
@@ -398,6 +403,65 @@ export class SqlVault {
         order by version desc limit 1;`,
     );
     return rows?.[0] ?? null;
+  }
+
+  // ---- process translator (vault/012_process_translator.sql) ---------------
+
+  async insertTranslation(dadId, t, candidates = []) {
+    const id = randomUUID();
+    const rows = await this.exec(
+      `insert into translations (id, dad_id, input_kind, input_cold, term_keys, verdict_request, clock_flag, result)
+       values (${lit(id)}, ${lit(dadId)}, ${lit(t.input_kind)}, ${lit(t.input_cold)}, ${litArr(t.term_keys)},
+               ${t.verdict_request ? "true" : "false"}, ${t.clock_flag ? "true" : "false"},
+               ${lit(JSON.stringify(t.result))}::jsonb)
+       returning ${TRANSLATION_COLS};`,
+    );
+    const cands = [];
+    for (const c of candidates) {
+      const cr = await this.exec(
+        `insert into translator_calendar_candidates (id, dad_id, translation_id, label, date_text, on_date)
+         values (${lit(randomUUID())}, ${lit(dadId)}, ${lit(id)}, ${lit(c.label)}, ${lit(c.date_text)},
+                 ${c.on_date ? `${lit(c.on_date)}::date` : "null"})
+         returning ${TRANSLATOR_CAND_COLS};`,
+      );
+      cands.push(cr[0]);
+    }
+    log("translate.insert", { table: "translations", id, dad: dadId, kind: t.input_kind, cands: cands.length });
+    return { ...rows[0], calendar_candidates: cands };
+  }
+
+  async _withCands(rec) {
+    if (!rec) return null;
+    const cands =
+      (await this.exec(
+        `select ${TRANSLATOR_CAND_COLS} from translator_calendar_candidates
+          where translation_id = ${lit(rec.id)} order by created_at, on_date;`,
+      )) ?? [];
+    return { ...rec, calendar_candidates: cands };
+  }
+
+  async getTranslation(dadId, id) {
+    const rows = await this.exec(
+      `select ${TRANSLATION_COLS} from translations where dad_id = ${lit(dadId)} and id = ${lit(id)};`,
+    );
+    return this._withCands(rows?.[0]);
+  }
+
+  async lastTranslation(dadId) {
+    const rows = await this.exec(
+      `select ${TRANSLATION_COLS} from translations where dad_id = ${lit(dadId)}
+        order by created_at desc, id desc limit 1;`,
+    );
+    return this._withCands(rows?.[0]);
+  }
+
+  async listTranslations(dadId, limit = 20) {
+    return (
+      (await this.exec(
+        `select id, created_at, input_kind, term_keys, verdict_request, clock_flag from translations
+          where dad_id = ${lit(dadId)} order by created_at desc, id desc limit ${Number(limit)};`,
+      )) ?? []
+    );
   }
 
   async listEvents(dadId) {

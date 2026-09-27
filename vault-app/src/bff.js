@@ -37,6 +37,7 @@ import {
   topicDef,
   topicPrompt,
 } from "./plan.js";
+import { LAWYER_LINE as TRANSLATOR_LAWYER_LINE, explain as translatorExplain } from "./translator.js";
 
 function unknownDad() {
   const err = new Error("unknown dad");
@@ -237,6 +238,31 @@ export function makeBff(vault, opts = {}) {
   function planNext(rows, depth = "simple") {
     const key = nextTopic(rows);
     return key ? topicPrompt(key, depth) : null;
+  }
+
+  // Process Translator view: the stored, cold result + private candidates.
+  // Never the raw paste; the cold input stays in the row only.
+  function publicTranslation(rec) {
+    return {
+      id: rec.id,
+      created_at: rec.created_at,
+      input_kind: rec.input_kind,
+      term_keys: [...(rec.term_keys ?? [])],
+      verdict_request: Boolean(rec.verdict_request),
+      clock_flag: Boolean(rec.clock_flag),
+      ...rec.result,
+      calendar_candidates: (rec.calendar_candidates ?? []).map((c) => ({
+        id: c.id,
+        label: c.label,
+        date_text: c.date_text,
+        on_date: c.on_date ?? null,
+        visibility: c.visibility,
+        status: c.status,
+        verified: false,
+        write_target: null,
+      })),
+      lawyer_line: TRANSLATOR_LAWYER_LINE,
+    };
   }
 
   function publicCandidate(c) {
@@ -639,6 +665,43 @@ export function makeBff(vault, opts = {}) {
         created_at: rec.created_at,
         lawyer_line: LAWYER_LINE,
       };
+    },
+
+    // ---- Process Translator (Slice 15) --------------------------------------
+    // Dictionary, not coach. V1 input = pasted text OR a named term. Writes
+    // only translations + private_only calendar candidates — never an
+    // intake event, Coach draft, OFW row, court-prep candidate, plan row,
+    // or any calendar. Logs: ids + term keys only.
+
+    // POST /vault/translate/explain {dad_id, term? | text?}
+    async postTranslateExplain({ dad_id, term, text }) {
+      await requireDad(dad_id);
+      const t = translatorExplain({ term, text });
+      const rec = await vault.insertTranslation(dad_id, t, t.calendar_candidates);
+      log("translate.explain", {
+        dad: dad_id,
+        id: rec.id,
+        kind: t.input_kind,
+        terms: t.term_keys.slice(0, 5),
+        verdict: t.verdict_request ? 1 : 0,
+        clock: t.clock_flag ? 1 : 0,
+      });
+      return publicTranslation(rec);
+    },
+
+    // GET /vault/translate/last {dad_id}
+    async getTranslateLast({ dad_id }) {
+      await requireDad(dad_id);
+      const rec = await vault.lastTranslation(dad_id);
+      if (!rec) throw Object.assign(new Error("nothing translated yet"), { status: 404 });
+      return publicTranslation(rec);
+    },
+
+    // GET /vault/translate/list {dad_id, limit?} -> [{id, created_at, input_kind, term_keys, ...}]
+    async getTranslateList({ dad_id, limit = 20 }) {
+      await requireDad(dad_id);
+      const n = Math.max(1, Math.min(50, Number(limit) || 20));
+      return { items: await vault.listTranslations(dad_id, n), lawyer_line: TRANSLATOR_LAWYER_LINE };
     },
 
     // GET /vault/chip_entry {dad_id}

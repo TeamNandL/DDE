@@ -367,6 +367,27 @@ advice; assumes the dad has a lawyer. Not Coach, not Quill, not OFW, not
 court-prep capture: plan answers write none of those. No outside edits,
 no Google Doc sync.
 
+### 12) Process Translator — Slice 15 (pointer)
+
+**Dictionary, not coach.** Paste a paper's text or name a term → plain
+English: what it IS, how it generally works, what to be aware of. Never a
+personal win/lose; "good or bad for me?" → a sharp question for the lawyer.
+Every result carries the loud `lawyer_line`.
+
+| Route | Does |
+|---|---|
+| `POST /vault/translate/explain {dad_id, term \| text}` | exactly one of `term` / `text` (V1: paste or named term only) |
+| `GET /vault/translate/last?dad_id` | latest stored explanation |
+| `GET /vault/translate/list?dad_id[&limit]` | ids + term keys, newest first |
+
+Clocks: `clock` says a deadline exists — never a day-count, never a
+state table. `calendar_candidates` are dates as written in the paste:
+`visibility: private_only`, `status: candidate`, `verified: false`,
+`write_target: null` — never written to OFW or any calendar. Also
+explains lawyer-relationship basics (billing, updates, what to raise) —
+never "replace your lawyer". Not Coach, not Quill, not Parenting Plan
+(§11), not Legal Intake, no OFW case dates. MAP: deferred.
+
 ### Auth header
 
 `Authorization: Bearer <token>` (preferred) or `X-DDE-Token: <token>`.
