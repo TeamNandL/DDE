@@ -19,7 +19,7 @@ export const CLAIM_TABLES = [
   "events", "communications", "documents", "month_summary", "state",
   "candidate_facts", "notifications", "plan_topics", "plan_drafts",
   "translations", "translator_calendar_candidates", "involvement_fields",
-  "legal_intakes", "legal_handoff_drafts",
+  "legal_intakes", "legal_handoff_drafts", "evidence_log",
 ];
 
 /** Tables that carry a pipe column and can therefore hold verified rows. */

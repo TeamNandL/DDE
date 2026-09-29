@@ -3,7 +3,7 @@
 //   1. Export through the RLS-bound request: claims / verified buckets from
 //      the real tables; receipt row lands in the owner-only ledger.
 //   2. Soft delete keeps every row (what a rollback to af56bad would see);
-//      hard wipe empties all 14 dad tables + token rows; tombstone stays.
+//      hard wipe empties all 15 dad tables + token rows; tombstone stays.
 //   3. dde_app has no access to the ledger tables.
 
 import test from "node:test";
@@ -19,13 +19,13 @@ import { unzipStore } from "../src/zip.js";
 import { runAsDad } from "../src/scope.js";
 import { jsonReq } from "./auth-cases.js";
 
-// Same 14 tables vault/015_auth_rls.sql protects (kept local: importing the
-// Slice 18 test file would re-register its tests here).
+// Dad-scoped tables (015 plus evidence_log from 017). Kept local: importing
+// the Slice 18 test file would re-register its tests here.
 const DAD_TABLES = [
   "events", "communications", "documents", "state", "month_summary",
   "candidate_facts", "notifications", "plan_topics", "plan_drafts",
   "translations", "translator_calendar_candidates", "involvement_fields",
-  "legal_intakes", "legal_handoff_drafts",
+  "legal_intakes", "legal_handoff_drafts", "evidence_log",
 ];
 
 const url = databaseUrl();
