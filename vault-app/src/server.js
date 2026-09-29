@@ -75,6 +75,8 @@ export const PHASE1_ROUTES = [
   "GET /vault/export/verified",
   "GET /vault/export",
   "GET /vault/search",
+  "POST /vault/evidence/log",
+  "GET /vault/evidence/inbox",
   "POST /vault/logout",
   "POST /vault/panic",
 ];
@@ -649,6 +651,22 @@ export async function handleBffRequest(bff, req, url, body) {
     return { status: 200, body: rows };
   }
 
+
+  // Evidence skeleton (Slice 23). Hash only — never a vent, never bytes.
+  // Log hygiene: ids only, never the filename guess.
+  if (method === "POST" && path === "/vault/evidence/log") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    log("http.evidence.log", { dad: dad_id });
+    return { status: 200, body: await bff.postEvidenceLog({ ...body, dad_id }) };
+  }
+
+  if (method === "GET" && path === "/vault/evidence/inbox") {
+    const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
+    await gateDad(bff, req, dad_id);
+    log("http.evidence.inbox", { dad: dad_id });
+    return { status: 200, body: await bff.getEvidenceInbox({ dad_id }) };
+  }
 
   if (method === "GET" && path === "/vault/search") {
     const dad_id = requireDadId(body.dad_id || q.get("dad_id"));

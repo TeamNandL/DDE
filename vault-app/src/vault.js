@@ -84,6 +84,7 @@ export class Vault {
     this.involvement_fields = []; // involvement cheat sheet (Slice 16)
     this.legal_intakes = []; // legal intake seat (Slice 17)
     this.legal_handoff_drafts = []; // draft ≠ send: sent_at always null
+    this.evidence_log = []; // hash-only evidence skeleton (Slice 23); not documents
   }
 
   insertEvent(dadId, row) {
@@ -631,6 +632,37 @@ export class Vault {
     return rec;
   }
 
+  // ---- evidence skeleton (vault/017_evidence.sql twin) ---------------------
+  // Hash only. stage is always logged; routing is always inbox_unmapped.
+  // Same dad + same sha256 returns the existing row.
+
+  logEvidence(dadId, prep) {
+    const existing = this.evidence_log.find((r) => r.dad_id === dadId && r.sha256 === prep.sha256);
+    if (existing) return { row: existing, created: false };
+    const rec = {
+      id: randomUUID(),
+      dad_id: dadId,
+      created_at: new Date().toISOString(),
+      sha256: prep.sha256,
+      schema_version: 1,
+      possession: prep.possession ?? "held",
+      stage: "logged",
+      routing: "inbox_unmapped",
+      filename_guess: prep.filename_guess ?? null,
+      filename_confidence: prep.filename_confidence ?? null,
+    };
+    this.evidence_log.push(rec);
+    log("evidence.insert", { table: "evidence_log", id: rec.id, dad: dadId });
+    return { row: rec, created: true };
+  }
+
+  listEvidenceInbox(dadId) {
+    return this.evidence_log
+      .filter((r) => r.dad_id === dadId && r.routing === "inbox_unmapped")
+      .slice()
+      .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)) || String(b.id).localeCompare(String(a.id)));
+  }
+
   // Read helpers used by spreadsheet views (same names as SqlVault).
   async listEvents(dadId) {
     return this.events
@@ -680,6 +712,7 @@ export class Vault {
       involvement_fields: pick(this.involvement_fields),
       legal_intakes: pick(this.legal_intakes),
       legal_handoff_drafts: pick(this.legal_handoff_drafts),
+      evidence_log: pick(this.evidence_log),
     };
   }
 
@@ -690,7 +723,7 @@ export class Vault {
       "events", "communications", "documents", "month_summary", "candidate_facts",
       "notifications", "plan_topics", "plan_drafts", "translations",
       "translator_calendar_candidates", "involvement_fields", "legal_intakes",
-      "legal_handoff_drafts",
+      "legal_handoff_drafts", "evidence_log",
     ]) {
       const before = this[t].length;
       this[t] = this[t].filter((r) => r.dad_id !== dadId);

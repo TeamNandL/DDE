@@ -28,7 +28,7 @@ export const DAD_TABLES = [
   "events", "communications", "documents", "state", "month_summary",
   "candidate_facts", "notifications", "plan_topics", "plan_drafts",
   "translations", "translator_calendar_candidates", "involvement_fields",
-  "legal_intakes", "legal_handoff_drafts",
+  "legal_intakes", "legal_handoff_drafts", "evidence_log",
 ];
 
 async function open() {
@@ -189,7 +189,7 @@ test("PG auth matrix through RLS: every route 401 none/bad · 403 cross · 401 u
     const b = (await jsonReq(base, "POST", "/vault/provision", {})).data;
     const mint = async (id) => (await bff.mintToken({ dad_id: id })).token;
     const rows = await authMatrix(base, a, b, randomUUID(), mint);
-    assert.equal(rows.length, 43);
+    assert.equal(rows.length, 45);
     for (const r of rows) {
       assert.deepEqual(
         [r.none, r.bad, r.cross, r.unknown, r.own],
@@ -198,7 +198,7 @@ test("PG auth matrix through RLS: every route 401 none/bad · 403 cross · 401 u
       );
     }
     // Every row the own-token requests wrote belongs to dad A (WITH CHECK held).
-    for (const t of ["events", "communications", "plan_topics", "translations", "involvement_fields", "legal_handoff_drafts"]) {
+    for (const t of ["events", "communications", "plan_topics", "translations", "involvement_fields", "legal_handoff_drafts", "evidence_log"]) {
       const { rows: bad } = await store.query(`select count(*)::int as n from ${t} where dad_id = $1`, [b.dad_id]);
       assert.equal(bad[0].n, 0, `${t}: nothing written for dad B`);
     }

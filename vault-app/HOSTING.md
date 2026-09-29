@@ -177,8 +177,8 @@ Soft delete: every token for the dad is revoked on the spot (his link dies:
 `token:reissue`). No new token can be minted for a dad inside the window.
 
 Hard wipe (`dad:purge`, run by Nick — cron it daily or run it by hand):
-deletes every row for the dad from all 14 dad tables (children before
-parents) **and drops his token rows**, then writes `purged_at` +
+deletes every row for the dad from all 15 dad tables, including
+`evidence_log` (children before parents) **and drops his token rows**, then writes `purged_at` +
 `purged_counts` on the ledger row. The dad no longer exists: any old token
 replayed gets `401 {"error":"unauthorized"}` — byte-identical to the soft
 window, to a revoked token, and to a dad that never existed (Nick F1

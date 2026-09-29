@@ -23,6 +23,7 @@ export const INVOLVEMENT_SCHEMA_PATH = resolve(here, "../../vault/013_involvemen
 export const LEGAL_INTAKE_SCHEMA_PATH = resolve(here, "../../vault/014_legal_intake.sql");
 export const AUTH_RLS_SCHEMA_PATH = resolve(here, "../../vault/015_auth_rls.sql");
 export const EXPORT_DELETE_SCHEMA_PATH = resolve(here, "../../vault/016_export_delete.sql");
+export const EVIDENCE_SCHEMA_PATH = resolve(here, "../../vault/017_evidence.sql");
 
 export function readPhase1SchemaSql() {
   return readFileSync(SCHEMA_PATH, "utf8");
@@ -197,6 +198,16 @@ export async function applyExportDeleteSchema(exec) {
   }
 }
 
+// Evidence skeleton (Slice 23): hash-only evidence_log + RLS. Must run after
+// 015 so dde_app and dde_current_dad() exist. Does not touch documents.
+export async function applyEvidenceSchema(exec) {
+  const sql = readFileSync(EVIDENCE_SCHEMA_PATH, "utf8");
+  if (!sql.trim()) throw new Error("017_evidence.sql is empty");
+  for (const stmt of splitSqlStatements(sql)) {
+    await exec(stmt);
+  }
+}
+
 /** Phase 1 tables + FTS + noticed + return + progress + cold-ask + drafts (+grade) + court-prep. */
 export async function applyVaultSchema(exec) {
   await applyPhase1Schema(exec);
@@ -214,4 +225,5 @@ export async function applyVaultSchema(exec) {
   await applyLegalIntakeSchema(exec);
   await applyAuthRlsSchema(exec);
   await applyExportDeleteSchema(exec);
+  await applyEvidenceSchema(exec);
 }

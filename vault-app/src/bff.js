@@ -61,6 +61,7 @@ import {
   renderPacket as legalRenderPacket,
 } from "./legalintake.js";
 import { DEFEAT_SAY, FAILSAFE_SAY, SAFETY_SAY, coach } from "./calmdraft.js";
+import { prepareEvidenceLog, publicEvidence } from "./evidence.js";
 import { LAWYER_LINE as TRANSLATOR_LAWYER_LINE, explain as translatorExplain } from "./translator.js";
 
 function unknownDad() {
@@ -1453,6 +1454,33 @@ export function makeBff(vault, opts = {}) {
       const rows = await vault.verifiedExport(dad_id);
       log("export.verified", { dad: dad_id, rows: rows.length });
       return rows;
+    },
+
+    // ---- Evidence skeleton (Slice 23) ---------------------------------------
+    // Hash-only log. Not a vent, not a document, no bytes. Stage is logged.
+    // Routing is the unmapped inbox. Filename, if any, stays a low-confidence
+    // guess. Logs: ids only — never the filename.
+
+    // POST /vault/evidence/log {dad_id, sha256|hash, filename?}
+    async postEvidenceLog(body) {
+      await requireDad(body.dad_id);
+      const prep = prepareEvidenceLog(body);
+      const { row, created } = await vault.logEvidence(body.dad_id, prep);
+      if (!row) {
+        const err = new Error("evidence log failed");
+        err.status = 500;
+        throw err;
+      }
+      log("evidence.log", { dad: body.dad_id, id: row.id, created });
+      return publicEvidence(row, { created });
+    },
+
+    // GET /vault/evidence/inbox {dad_id} -> unmapped logged hashes
+    async getEvidenceInbox({ dad_id }) {
+      await requireDad(dad_id);
+      const rows = await vault.listEvidenceInbox(dad_id);
+      log("evidence.inbox", { dad: dad_id, n: rows.length });
+      return { routing: "inbox_unmapped", items: rows.map((r) => publicEvidence(r)) };
     },
   };
 }
