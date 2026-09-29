@@ -156,6 +156,36 @@ test("C2 vent cue → intake only, never evidence/log; mixed blurt stays vent", 
   }
 });
 
+test("overwhelm + file in one blurt stays vent and does not log", async () => {
+  const s = await start();
+  try {
+    const { dad_id, token } = await dad(s.base);
+    const cues = [
+      "Everything at once. I have the PDF",
+      "I can't do this. Here is the statement PDF",
+      "Shutting down. Got a scan of the order",
+    ];
+    for (const text of cues) {
+      const fork = classifyChipCue(text);
+      assert.equal(fork.track, "vent", text);
+      assert.equal(fork.shrink, true, text);
+      const turn = await jsonReq(
+        s.base,
+        "POST",
+        "/vault/chip/turn",
+        { dad_id, text, sha256: HASH, filename: "order.pdf" },
+        { token },
+      );
+      assert.equal(turn.status, 200, text);
+      assert.equal(turn.data.track, "vent", text);
+      assert.equal(turn.data.say, SHRINK_SAY, text);
+      assert.equal(s.vault.evidence_log.length, 0, text);
+    }
+  } finally {
+    await s.close();
+  }
+});
+
 test("C3 overwhelm → one smaller ask, no menu", async () => {
   const s = await start();
   try {

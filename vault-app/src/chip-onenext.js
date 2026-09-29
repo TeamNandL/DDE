@@ -83,9 +83,10 @@ export function classifyChipCue(text) {
   const emotion = EMOTION_RE.test(raw);
   const file = FILE_RE.test(raw);
   const shrink = OVERWHELM_RE.test(raw);
+  // Overwhelm dominates a mixed blurt, including a file named in the same turn.
+  if (shrink) return { track: "vent", shrink: true };
   if (GAUGE_RE.test(raw)) return { track: "gauge", shrink: false };
-  if (shrink && !file) return { track: "vent", shrink: true };
-  if (file && emotion) return { track: "vent", shrink };
+  if (file && emotion) return { track: "vent", shrink: false };
   if (file) return { track: "evidence", shrink: false };
   if (TONE_RE.test(raw)) return { track: "tone", shrink: false };
   if (EXHIBIT_RE.test(raw)) return { track: "exhibit", shrink: false };
