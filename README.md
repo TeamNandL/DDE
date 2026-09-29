@@ -1,7 +1,9 @@
 # DDE
 
 Personal DDE venture. Phase 1 lives in [`vault-app/`](vault-app/README.md):
-vault rails, rented-Postgres path, optional HTTP BFF, and spreadsheet views.
+vault rails, rented-Postgres path, optional HTTP BFF, spreadsheet views, and
+the [exhibit packet](vault-app/README.md#exhibit-packet-the-court-facing-output)
+— the verified-only, lettered, cited filing the vault exists to produce.
 
 Host the HTTP BFF with Docker / Fly / Render: [`vault-app/HOSTING.md`](vault-app/HOSTING.md).
 `DATABASE_URL` is a runtime secret only — nothing secret is committed.

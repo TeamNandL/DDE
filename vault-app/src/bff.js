@@ -19,6 +19,7 @@ import { stripPii } from "./pii.js";
 import { clampProgressPatch, progressChipLine, progressLine, softGrade } from "./progress.js";
 import { createMemoryTokenStore, hashToken, isTokenExpired, shouldTouch, tokenTtlMs } from "./tokens.js";
 import { buildDadExport } from "./dadexport.js";
+import { buildExhibitPacket } from "./exhibit.js";
 import { createMemoryOpsStore, deleteGraceMs, exportFreshMs } from "./opsstore.js";
 import { parseSearchOpts } from "./search.js";
 import {
@@ -1467,6 +1468,15 @@ export function makeBff(vault, opts = {}) {
       const rows = await vault.verifiedExport(dad_id);
       log("export.verified", { dad: dad_id, rows: rows.length });
       return rows;
+    },
+
+    // GET /vault/exhibit {dad_id} -> lettered, dated, cited exhibit packet.
+    // Built from verified_export, so claim rows cannot appear — this is the
+    // court-facing read, not a second privileged path into the vault.
+    // No verified rows yet → { count: 0, exhibits: [] }; never an error.
+    async getVaultExhibit({ dad_id }) {
+      await requireDad(dad_id);
+      return buildExhibitPacket(vault, dad_id);
     },
 
 

@@ -63,7 +63,7 @@ test("writeExports emits CSV and XLSX views, not a source of truth", async () =>
   await seedDemo(bff, DEMO_DAD_ID);
   const dir = mkdtempSync(join(tmpdir(), "dde-export-"));
   const result = await writeExports({ vault, dadId: DEMO_DAD_ID, outDir: dir, store: "memory" });
-  assert.equal(result.written.length, 3);
+  assert.equal(result.written.length, 4, "events, state, verified, exhibit");
 
   const eventsCsv = readFileSync(join(dir, "events_time_log.csv"), "utf8");
   assert.ok(eventsCsv.startsWith(EVENTS_HEADERS.join(",")));
@@ -73,6 +73,12 @@ test("writeExports emits CSV and XLSX views, not a source of truth", async () =>
   const stateCsv = readFileSync(join(dir, "state_missing_checklist.csv"), "utf8");
   assert.ok(stateCsv.startsWith(STATE_HEADERS.join(",")));
   assert.match(stateCsv, /verify count in OFW record for September/);
+
+  const exhibitCsv = readFileSync(join(dir, "exhibit_packet.csv"), "utf8");
+  assert.ok(exhibitCsv.startsWith("label,kind,dated,description,source_ref,id,pipe"));
+  assert.match(exhibitCsv, /^A,communication,2026-09-14,/m, "the verified pull is Exhibit A");
+  assert.doesNotMatch(exhibitCsv, /late_exchange/, "claim events never appear in a filing");
+  assert.doesNotMatch(exhibitCsv, /spiteful/);
 
   const verifiedCsv = readFileSync(join(dir, "verified_export.csv"), "utf8");
   assert.ok(verifiedCsv.startsWith(VERIFIED_HEADERS.join(",")));
@@ -97,11 +103,12 @@ test("toCsv quotes commas and never invents a third pipe", () => {
   assert.equal(csv, "pipe,notes\nclaim,\"a, b\"\n");
 });
 
-test("export CLI --demo writes the three views in memory even if DATABASE_URL is set", async () => {
+test("export CLI --demo writes every view in memory even if DATABASE_URL is set", async () => {
   const dir = mkdtempSync(join(tmpdir(), "dde-cli-"));
   const out = await runExportCli(["all", "--demo", "--out", dir]);
   assert.equal(out.exitCode, 0, out.stderr);
   assert.match(out.stdout, /store=memory/);
   assert.match(out.stdout, /events rows=1/);
   readFileSync(join(dir, "verified_export.xlsx"));
+  readFileSync(join(dir, "exhibit_packet.xlsx"));
 });

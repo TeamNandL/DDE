@@ -46,6 +46,7 @@ export function routeCases(dad_id, ctx = {}) {
     ["GET", q("/vault/comms/drafts")],
     ["POST", "/vault/comms/pull", { dad_id, channel: "ofw", source_ref: "ofw:alex:1", body_cold: "Pickup confirmed.", sent_at: "2026-09-20T17:00:00Z" }],
     ["GET", q("/vault/export/verified")],
+    ["GET", q("/vault/exhibit")],
     ["GET", q("/vault/export")],
     ["GET", q("/vault/search", "&q=pickup")],
     ["POST", "/vault/evidence/log", { dad_id, sha256: "ab".repeat(32), filename: "IMG_2044.jpg" }],

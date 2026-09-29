@@ -73,6 +73,7 @@ export const PHASE1_ROUTES = [
   "GET /vault/comms/drafts",
   "POST /vault/comms/pull",
   "GET /vault/export/verified",
+  "GET /vault/exhibit",
   "GET /vault/export",
   "GET /vault/search",
   "POST /vault/evidence/log",
@@ -650,6 +651,12 @@ export async function handleBffRequest(bff, req, url, body) {
     await gateDad(bff, req, dad_id);
     const rows = await bff.getVaultExportVerified({ dad_id });
     return { status: 200, body: rows };
+  }
+
+  if (method === "GET" && path === "/vault/exhibit") {
+    const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
+    await gateDad(bff, req, dad_id);
+    return { status: 200, body: await bff.getVaultExhibit({ dad_id }) };
   }
 
 
