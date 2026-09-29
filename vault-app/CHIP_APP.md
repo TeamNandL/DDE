@@ -13,6 +13,15 @@ Never Supabase / Postgres direct. Fake family in demos only.
 | Quill — talk/text fork | "Want to tell me? Talk or text." → story → `feedback` | intake `fork` → `POST /vault/tell` |
 | Eddie | state / One Next | `GET /vault/state` |
 
+
+## One-Next undercarriage
+
+`POST /vault/chip/turn` is the front door for one blurt. It picks one track
+and returns one `say`. Hash-only file note via the existing evidence log.
+No bytes, no `storage_uri`, no OCR. Vent never logs evidence. Exhibit is
+`verified_export` only. `/vault/comms/cold` is not used here — it stamps
+`sent_at`; Tone uses `/vault/comms/draft` so draft ≠ send.
+
 ## Two-object Chip (tenant bind)
 
 | Object | Template | Carries |

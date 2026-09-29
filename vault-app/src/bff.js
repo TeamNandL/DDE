@@ -62,6 +62,20 @@ import {
   renderPacket as legalRenderPacket,
 } from "./legalintake.js";
 import { DEFEAT_SAY, FAILSAFE_SAY, SAFETY_SAY, coach } from "./calmdraft.js";
+import { prepareEvidenceLog, publicEvidence } from "./evidence.js";
+import {
+  EXHIBIT_EMPTY_SAY,
+  EXHIBIT_READY_SAY,
+  FILE_WAIT_SAY,
+  GAUGE_SAY,
+  SHRINK_SAY,
+  TONE_SAY,
+  UNDER_FLOOR_SAY,
+  assertDadSay,
+  classifyChipCue,
+  oneNextFromState,
+  scrubDadSay,
+} from "./chip-onenext.js";
 import { LAWYER_LINE as TRANSLATOR_LAWYER_LINE, explain as translatorExplain } from "./translator.js";
 
 function unknownDad() {
@@ -1463,6 +1477,147 @@ export function makeBff(vault, opts = {}) {
     async getVaultExhibit({ dad_id }) {
       await requireDad(dad_id);
       return buildExhibitPacket(vault, dad_id);
+    },
+
+
+    // POST /vault/chip/turn {dad_id, text, sha256?, filename?}
+    // One track, one Next. File cue → existing hash log only.
+    // Vent cue never calls evidence/log. No bytes, no storage_uri.
+    // Chip speaks `say` once. File success is the PRIMARY line only.
+    // Eddie `next_action` is quoted on the Eddie track, not stacked here.
+    async postChipTurn(body) {
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        const err = new Error("chip turn body must be an object");
+        err.status = 400;
+        throw err;
+      }
+      const banned = ["bytes", "bytea", "content", "contents", "data", "file", "blob", "base64", "raw", "payload", "storage_uri", "multipart"];
+      for (const key of banned) {
+        if (Object.prototype.hasOwnProperty.call(body, key)) {
+          const err = new Error("chip turn stores no bytes");
+          err.status = 400;
+          throw err;
+        }
+      }
+      const dad_id = body.dad_id;
+      await requireDad(dad_id);
+      const text = typeof body.text === "string" ? body.text : "";
+      if (!text.trim()) {
+        const err = new Error("text is required");
+        err.status = 400;
+        throw err;
+      }
+      const fork = classifyChipCue(text);
+      const finish = (out) => {
+        if (out.say != null) {
+          out.say = scrubDadSay(out.say, dad_id);
+          assertDadSay(out.say);
+        }
+        if (out.next_action != null) {
+          out.next_action = scrubDadSay(out.next_action, dad_id);
+          assertDadSay(out.next_action);
+        }
+        log("chip.turn", { dad: dad_id, track: fork.track, wrote: out.wrote ?? "none" });
+        return out;
+      };
+
+      if (fork.track === "evidence") {
+        const sha = body.sha256 ?? body.hash;
+        if (typeof sha !== "string" || !sha.trim()) {
+          return finish({ track: "evidence", wrote: null, say: FILE_WAIT_SAY, next_action: null });
+        }
+        await this.postEvidenceLog({
+          dad_id,
+          sha256: sha,
+          filename: typeof body.filename === "string" ? body.filename : undefined,
+        });
+        // PRIMARY already holds the one Next. Eddie's line waits for an Eddie turn.
+        return finish({
+          track: "evidence",
+          wrote: "evidence/log",
+          say: UNDER_FLOOR_SAY,
+          next_action: null,
+        });
+      }
+
+      if (fork.track === "gauge") {
+        return finish({ track: "gauge", wrote: null, say: GAUGE_SAY, next_action: null });
+      }
+
+      if (fork.track === "tone") {
+        const draft = await this.postCommsDraft({ dad_id, body: text });
+        const say = draft.written === 1 ? TONE_SAY : draft.say ?? null;
+        return finish({ track: "tone", wrote: draft.written === 1 ? "comms/draft" : null, say, next_action: null });
+      }
+
+      if (fork.track === "eddie") {
+        const state = await requireDad(dad_id);
+        return finish({
+          track: "eddie",
+          wrote: null,
+          say: oneNextFromState(state.next_action, dad_id),
+          next_action: state.next_action ? scrubDadSay(String(state.next_action), dad_id) : null,
+        });
+      }
+
+      if (fork.track === "exhibit") {
+        const rows = await this.getVaultExportVerified({ dad_id });
+        const empty = !rows || rows.length === 0;
+        return finish({
+          track: "exhibit",
+          wrote: null,
+          say: empty ? EXHIBIT_EMPTY_SAY : EXHIBIT_READY_SAY,
+          next_action: null,
+        });
+      }
+
+      const intake = await this.postVaultIntake({ dad_id, text, make_notice: true });
+      if (harmCheck(text)) {
+        return finish({ track: "vent", wrote: "intake", say: null, next_action: null });
+      }
+      if (fork.shrink) {
+        return finish({ track: "vent", wrote: "intake", say: SHRINK_SAY, next_action: null });
+      }
+      if (intake.written === 0) {
+        return finish({ track: "vent", wrote: "intake", say: null, next_action: null });
+      }
+      if (intake.say) {
+        return finish({ track: "vent", wrote: "intake", say: intake.say, next_action: null });
+      }
+      const state = await requireDad(dad_id);
+      return finish({
+        track: "vent",
+        wrote: "intake",
+        say: oneNextFromState(state.next_action, dad_id),
+        next_action: state.next_action ? scrubDadSay(String(state.next_action), dad_id) : null,
+      });
+    },
+
+    // ---- Evidence skeleton (Slice 23) ---------------------------------------
+    // Hash-only log. Not a vent, not a document, no bytes. Stage is logged.
+    // Routing is the unmapped inbox. Filename, if any, stays a low-confidence
+    // guess. Logs: ids only — never the filename.
+
+    // POST /vault/evidence/log {dad_id, sha256|hash, filename?}
+    async postEvidenceLog(body) {
+      await requireDad(body.dad_id);
+      const prep = prepareEvidenceLog(body);
+      const { row, created } = await vault.logEvidence(body.dad_id, prep);
+      if (!row) {
+        const err = new Error("evidence log failed");
+        err.status = 500;
+        throw err;
+      }
+      log("evidence.log", { dad: body.dad_id, id: row.id, created });
+      return publicEvidence(row, { created });
+    },
+
+    // GET /vault/evidence/inbox {dad_id} -> unmapped logged hashes
+    async getEvidenceInbox({ dad_id }) {
+      await requireDad(dad_id);
+      const rows = await vault.listEvidenceInbox(dad_id);
+      log("evidence.inbox", { dad: dad_id, n: rows.length });
+      return { routing: "inbox_unmapped", items: rows.map((r) => publicEvidence(r)) };
     },
   };
 }
