@@ -21,7 +21,8 @@
 -- RLS matches vault/015_auth_rls.sql: dde_app, dde_own_rows, dad_id =
 -- dde_current_dad(). Idempotent. Apply after 016.
 --
--- One-step rollback to 6fce1d2: that commit never reads this table.
+-- One-step rollback to 6fce1d2f59fa758be3426625241c23188d5784b2:
+-- that commit never reads this table. Down:
 --   drop table if exists evidence_log;
 --
 --   psql "$DATABASE_URL" -f vault/017_evidence.sql

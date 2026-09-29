@@ -73,6 +73,9 @@ test("filename guess is the basename at low confidence — never a document type
   assert.equal(prepared.filename_confidence, "low");
   assert.equal(prepared.schema_version, 1, "schema_version is set on create");
   assert.equal(prepared.possession, "held");
+  assert.equal(prepareEvidenceLog({ sha256: HASH, possession: "not located" }).possession, "not located");
+  assert.equal(prepareEvidenceLog({ sha256: HASH, possession: "user says none" }).possession, "user says none");
+  assert.equal(prepareEvidenceLog({ hash: HASH }).sha256, HASH, "hash alias");
   assert.throws(() => prepareEvidenceLog({ sha256: HASH, filename_confidence: "high" }), /filename confidence stays low/);
   assert.throws(() => prepareEvidenceLog({ sha256: HASH, schema_version: 2 }), /schema_version must be 1/);
   assert.throws(() => prepareEvidenceLog({ sha256: HASH, possession: "vault" }), /possession must be held/);
@@ -181,9 +184,20 @@ test("after log, verified_export empty for those rows", async () => {
     assert.equal(inbox.data.items.length, 1);
     assert.equal(inbox.data.items[0].sha256, HASH);
 
+    const none = await jsonReq(
+      s.base,
+      "POST",
+      "/vault/evidence/log",
+      { dad_id: a.dad_id, hash: HASH_B, possession: "user says none" },
+      { token: a.token },
+    );
+    assert.equal(none.status, 200);
+    assert.equal(none.data.schema_version, 1);
+    assert.equal(none.data.possession, "user says none");
+
     const verified = await jsonReq(s.base, "GET", `/vault/export/verified?dad_id=${a.dad_id}`, null, { token: a.token });
     assert.equal(verified.status, 200);
-    assert.deepEqual(verified.data, [], "verified_export empty for those rows");
+    assert.deepEqual(verified.data, [], "verified_export still empty for those rows");
     assert.equal(JSON.stringify(verified.data).includes(HASH), false);
     assert.ok(
       !s.vault.verifiedExport(a.dad_id).some((r) => r.sha256 === HASH || r.source_table === "evidence_log"),
