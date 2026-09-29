@@ -81,6 +81,30 @@ test("filename guess is the basename at low confidence — never a document type
   assert.throws(() => prepareEvidenceLog({ sha256: HASH, possession: "vault" }), /possession must be held/);
 });
 
+test("filename_guess stripPii: raw basename never stores SSN/email/phone (Slice 23b)", () => {
+  // Synthetic PII shapes only — never a real identifier.
+  assert.deepEqual(filenameGuess("folder/SSN_123-45-6789_scan.pdf"), {
+    filename_guess: "SSN_[tax-id]_scan.pdf",
+    filename_confidence: "low",
+  });
+  assert.deepEqual(filenameGuess("dad@example.com_note.pdf"), {
+    filename_guess: "[email]_note.pdf",
+    filename_confidence: "low",
+  });
+  assert.deepEqual(filenameGuess("call_904-555-1212.jpg"), {
+    filename_guess: "call_[phone].jpg",
+    filename_confidence: "low",
+  });
+  const prepared = prepareEvidenceLog({
+    sha256: HASH,
+    filename: "C:\\inbox\\account_12345678.pdf",
+  });
+  assert.equal(prepared.filename_guess, "account_[account].pdf");
+  assert.equal(prepared.filename_confidence, "low");
+  // Clean basenames still pass through unchanged.
+  assert.equal(filenameGuess("IMG_2044.JPG").filename_guess, "IMG_2044.JPG");
+});
+
 test("POST /vault/evidence/log stores a hash only; duplicate dad+hash is the same row; inbox is unmapped", async () => {
   const s = await start();
   try {
