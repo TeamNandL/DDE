@@ -45,6 +45,8 @@ const INVOLVEMENT_COLS = `dad_id, kid_key, field_key, position, value,
   to_char(asked_on, 'YYYY-MM-DD') as asked_on, asked_via, outcome, source, claim_status, updated_at`;
 
 const LEGAL_INTAKE_COLS = `id, dad_id, created_at, who, what_cold, urgency, flags, route, claim_status`;
+const EVIDENCE_COLS = `id, dad_id, hash, schema_version, stage, routing, possession,
+  doc_type_guess, doc_type_confidence, original_filename, format, needs_ocr, created_at`;
 const HANDOFF_COLS = `id, intake_id, dad_id, version, body, created_at, sent_at`;
 
 const PLAN_TOPIC_COLS = `dad_id, topic_key, position, status, choice, detail, stance, depth,
@@ -567,6 +569,52 @@ export class SqlVault {
     return rows?.[0] ?? null;
   }
 
+  // ---- evidence hash log (vault/017_evidence.sql) --------------------------
+  // Repeat (dad_id, hash) returns the existing row. needs_ocr is the column
+  // default (false) — this insert never sets it.
+
+  async insertEvidence(dadId, row) {
+    if (row.stage !== "logged") throw new Error("evidence stage is logged only");
+    if (row.routing !== "inbox_unmapped") throw new Error("evidence routing is inbox_unmapped only");
+    if (row.doc_type_confidence != null && row.doc_type_confidence !== "low") {
+      throw new Error("evidence guess confidence is low only");
+    }
+    if (row.needs_ocr) throw new Error("evidence needs_ocr stays false");
+    const id = randomUUID();
+    const inserted = await this.exec(
+      `insert into evidence (id, dad_id, hash, schema_version, stage, routing, possession,
+                             doc_type_guess, doc_type_confidence, original_filename, format)
+       values (${lit(id)}, ${lit(dadId)}, ${lit(row.hash)}, ${Number(row.schema_version)},
+               ${lit("logged")}, ${lit("inbox_unmapped")}, ${lit(row.possession)},
+               ${lit(row.doc_type_guess ?? null)}, ${lit(row.doc_type_confidence ?? null)},
+               ${lit(row.original_filename ?? null)}, ${lit(row.format ?? null)})
+       on conflict (dad_id, hash) do nothing
+       returning ${EVIDENCE_COLS};`,
+    );
+    if (inserted?.[0]) {
+      log("evidence.insert", { table: "evidence", id, dad: dadId });
+      return { row: inserted[0], duplicate: false };
+    }
+    const existing = await this.exec(
+      `select ${EVIDENCE_COLS} from evidence
+        where dad_id = ${lit(dadId)} and hash = ${lit(row.hash)};`,
+    );
+    const rec = existing?.[0];
+    if (!rec) throw new Error("evidence log failed");
+    log("evidence.insert", { table: "evidence", id: rec.id, dad: dadId, duplicate: true });
+    return { row: rec, duplicate: true };
+  }
+
+  async listEvidenceInbox(dadId) {
+    return (
+      (await this.exec(
+        `select ${EVIDENCE_COLS} from evidence
+          where dad_id = ${lit(dadId)} and routing = 'inbox_unmapped'
+          order by created_at desc, id desc;`,
+      )) ?? []
+    );
+  }
+
   async listEvents(dadId) {
     return (
       (await this.exec(
@@ -588,7 +636,7 @@ export class SqlVault {
     "events", "communications", "documents", "month_summary", "state",
     "candidate_facts", "notifications", "plan_topics", "plan_drafts",
     "translations", "translator_calendar_candidates", "involvement_fields",
-    "legal_intakes", "legal_handoff_drafts",
+    "legal_intakes", "legal_handoff_drafts", "evidence",
   ];
 
   async exportAll(dadId) {
@@ -603,6 +651,7 @@ export class SqlVault {
   async wipeDad(dadId) {
     const counts = {};
     const order = [
+      "evidence",
       "legal_handoff_drafts", "legal_intakes",
       "translator_calendar_candidates", "translations",
       "plan_drafts", "plan_topics", "involvement_fields",

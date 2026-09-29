@@ -44,7 +44,7 @@ test("auth matrix (memory): 401 none/bad · 403 cross-dad · 401 unknown (F1) ·
       assert.equal(r.unknown, 401, `${r.route} unknown dad → 401 (F1: same as revoked)`);
       assert.equal(r.own, 200, `${r.route} own token: ${JSON.stringify(r.error)}`);
     }
-    assert.equal(rows.length, 43);
+    assert.equal(rows.length, 45);
   } finally {
     await s.close();
   }

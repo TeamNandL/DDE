@@ -4,6 +4,9 @@
 
 export const MINT_ROUTES = ["POST /vault/provision"];
 
+// Shape-valid sha256. The auth matrix only needs a log the route will accept.
+const EVIDENCE_HASH = "ab".repeat(32);
+
 export function routeCases(dad_id, ctx = {}) {
   const q = (p, extra = "") => `${p}?dad_id=${dad_id}${extra}`;
   return [
@@ -37,6 +40,8 @@ export function routeCases(dad_id, ctx = {}) {
     ["POST", "/vault/legal/intake", { dad_id, who: "school", what: "Report card came home.", urgency: "this_month" }],
     ["GET", q("/vault/legal/intake")],
     ["POST", "/vault/legal/handoff", { dad_id }],
+    ["POST", "/vault/evidence/log", { dad_id, hash: EVIDENCE_HASH }],
+    ["GET", q("/vault/evidence/inbox")],
     ["POST", "/vault/checkins/ensure", { dad_id, date: "2026-09-27", tz_offset_minutes: -240 }],
     ["GET", q("/vault/notifications"), undefined, (d) => { ctx.notification_id = (d?.items ?? d)?.[0]?.id; }],
     ["POST", "/vault/notifications/mark", () => ({ dad_id, id: ctx.notification_id, status: "read" })],

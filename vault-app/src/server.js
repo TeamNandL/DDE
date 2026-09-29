@@ -63,6 +63,8 @@ export const PHASE1_ROUTES = [
   "POST /vault/legal/intake",
   "GET /vault/legal/intake",
   "POST /vault/legal/handoff",
+  "POST /vault/evidence/log",
+  "GET /vault/evidence/inbox",
   "POST /vault/candidates/review",
   "GET /vault/notifications",
   "POST /vault/checkins/ensure",
@@ -451,6 +453,22 @@ export async function handleBffRequest(bff, req, url, body) {
     await gateDad(bff, req, dad_id);
     log("http.legal.handoff", { dad: dad_id });
     return { status: 200, body: await bff.postLegalHandoff({ dad_id, id: body.id }) };
+  }
+
+  // Evidence hash log (Slice 23). Ids only — never the filename or the hash.
+  // Intake (/vault/intake) is not this path.
+  if (method === "POST" && path === "/vault/evidence/log") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    log("http.evidence.log", { dad: dad_id });
+    return { status: 200, body: await bff.postEvidenceLog(body) };
+  }
+
+  if (method === "GET" && path === "/vault/evidence/inbox") {
+    const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
+    await gateDad(bff, req, dad_id);
+    log("http.evidence.inbox", { dad: dad_id });
+    return { status: 200, body: await bff.getEvidenceInbox({ dad_id }) };
   }
 
   // Involvement Cheat Sheet (Slice 16). Log hygiene: ids only — never kid

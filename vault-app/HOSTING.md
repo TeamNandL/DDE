@@ -177,8 +177,8 @@ Soft delete: every token for the dad is revoked on the spot (his link dies:
 `token:reissue`). No new token can be minted for a dad inside the window.
 
 Hard wipe (`dad:purge`, run by Nick — cron it daily or run it by hand):
-deletes every row for the dad from all 14 dad tables (children before
-parents) **and drops his token rows**, then writes `purged_at` +
+deletes every row for the dad from the dad tables (children before
+parents, including the Slice 23 `evidence` hash log) **and drops his token rows**, then writes `purged_at` +
 `purged_counts` on the ledger row. The dad no longer exists: any old token
 replayed gets `401 {"error":"unauthorized"}` — byte-identical to the soft
 window, to a revoked token, and to a dad that never existed (Nick F1
@@ -207,4 +207,31 @@ migrate down: the 016 tables are owner-only and af56bad never reads them.
 
 Proof: `DATABASE_URL=... node --test test/export-delete.test.js test/export-delete.pg.test.js`
 (PG leg asserts every row is still present during the soft window and that
-all 14 tables + token rows read zero after purge).
+every dad table + token rows read zero after purge).
+
+## Evidence hash log (Slice 23)
+
+Boot applies `vault/017_evidence.sql` after 016. Table `evidence` is
+dad-scoped (`dde_app` + `dde_current_dad()`), same policy shape as 015.
+A row is a content sha256 plus a low-confidence filename/format guess.
+Stage stays `logged`, routing stays `inbox_unmapped`. No file content
+column. `needs_ocr` is locked false. The table is not part of
+`verified_export` or `affidavit_support`.
+
+| Route | What it does |
+| --- | --- |
+| `POST /vault/evidence/log` | `{dad_id, hash, original_filename?, format?, possession?}`. Creates `logged` / `inbox_unmapped`. Same hash for the same dad returns the existing row. |
+| `GET /vault/evidence/inbox` | That dad's `inbox_unmapped` rows only. |
+
+`POST /vault/intake` is unchanged (Quill vent). This route does not write `documents`.
+
+### Rollback to 6fce1d2 (one step)
+
+`git checkout 6fce1d2` → build → deploy, same `DATABASE_URL`. Then drop the
+table so the previous suite's dad-scoped coverage check stays true:
+
+    drop table if exists evidence;
+
+6fce1d2 never reads `evidence`. Leaving the table in place does not change
+old app behavior, and it does fail that older RLS coverage test until the
+drop. Hash rows are claims in the dad export; they are not in `verified/`.

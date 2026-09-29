@@ -84,6 +84,7 @@ export class Vault {
     this.involvement_fields = []; // involvement cheat sheet (Slice 16)
     this.legal_intakes = []; // legal intake seat (Slice 17)
     this.legal_handoff_drafts = []; // draft ≠ send: sent_at always null
+    this.evidence = []; // hash log only (Slice 23) — never verified
   }
 
   insertEvent(dadId, row) {
@@ -631,6 +632,44 @@ export class Vault {
     return rec;
   }
 
+  // ---- evidence hash log (vault/017_evidence.sql twin) ---------------------
+
+  insertEvidence(dadId, row) {
+    if (row.stage !== "logged") throw new Error("evidence stage is logged only");
+    if (row.routing !== "inbox_unmapped") throw new Error("evidence routing is inbox_unmapped only");
+    if (row.doc_type_confidence != null && row.doc_type_confidence !== "low") {
+      throw new Error("evidence guess confidence is low only");
+    }
+    if (row.needs_ocr) throw new Error("evidence needs_ocr stays false");
+    const existing = this.evidence.find((r) => r.dad_id === dadId && r.hash === row.hash);
+    if (existing) return { row: existing, duplicate: true };
+    const rec = {
+      id: randomUUID(),
+      dad_id: dadId,
+      hash: row.hash,
+      schema_version: row.schema_version,
+      stage: "logged",
+      routing: "inbox_unmapped",
+      possession: row.possession,
+      doc_type_guess: row.doc_type_guess ?? null,
+      doc_type_confidence: row.doc_type_confidence ?? null,
+      original_filename: row.original_filename ?? null,
+      format: row.format ?? null,
+      needs_ocr: false,
+      created_at: new Date().toISOString(),
+    };
+    this.evidence.push(rec);
+    log("evidence.insert", { table: "evidence", id: rec.id, dad: dadId });
+    return { row: rec, duplicate: false };
+  }
+
+  listEvidenceInbox(dadId) {
+    return this.evidence
+      .filter((r) => r.dad_id === dadId && r.routing === "inbox_unmapped")
+      .slice()
+      .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)) || String(b.id).localeCompare(String(a.id)));
+  }
+
   // Read helpers used by spreadsheet views (same names as SqlVault).
   async listEvents(dadId) {
     return this.events
@@ -680,6 +719,7 @@ export class Vault {
       involvement_fields: pick(this.involvement_fields),
       legal_intakes: pick(this.legal_intakes),
       legal_handoff_drafts: pick(this.legal_handoff_drafts),
+      evidence: pick(this.evidence),
     };
   }
 
@@ -690,7 +730,7 @@ export class Vault {
       "events", "communications", "documents", "month_summary", "candidate_facts",
       "notifications", "plan_topics", "plan_drafts", "translations",
       "translator_calendar_candidates", "involvement_fields", "legal_intakes",
-      "legal_handoff_drafts",
+      "legal_handoff_drafts", "evidence",
     ]) {
       const before = this[t].length;
       this[t] = this[t].filter((r) => r.dad_id !== dadId);

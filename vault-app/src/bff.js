@@ -61,6 +61,7 @@ import {
   renderPacket as legalRenderPacket,
 } from "./legalintake.js";
 import { DEFEAT_SAY, FAILSAFE_SAY, SAFETY_SAY, coach } from "./calmdraft.js";
+import { EVIDENCE_ROUTING, buildEvidenceInsert, toEvidenceLog } from "./evidence.js";
 import { LAWYER_LINE as TRANSLATOR_LAWYER_LINE, explain as translatorExplain } from "./translator.js";
 
 function unknownDad() {
@@ -1112,6 +1113,38 @@ export function makeBff(vault, opts = {}) {
       const today = new Date(opts.now ?? Date.now()).toISOString().slice(0, 10);
       const draft = await vault.insertHandoffDraft(dad_id, rec.id, version, legalRenderPacket(rec, version, today));
       return { ...publicLegalIntake(rec, draft), draft_footer: LEGAL_DRAFT_FOOTER };
+    },
+
+    // ---- Evidence hash log (Slice 23) ---------------------------------------
+    // POST /vault/evidence/log writes one evidence row: stage logged,
+    // routing inbox_unmapped. Guess is filename/format only, confidence low.
+    // A repeat (dad_id, hash) returns the existing row (duplicate: true).
+    // Never a Quill event, never a document, never verified_export.
+
+    async postEvidenceLog(body) {
+      const dad_id = body?.dad_id;
+      await requireDad(dad_id);
+      const row = buildEvidenceInsert(body);
+      const { row: rec, duplicate } = await vault.insertEvidence(dad_id, row);
+      log("evidence.log", {
+        dad: dad_id,
+        id: rec.id,
+        duplicate,
+        stage: rec.stage,
+        routing: rec.routing,
+      });
+      return toEvidenceLog(rec, { duplicate });
+    },
+
+    // GET /vault/evidence/inbox → that dad's inbox_unmapped rows only.
+    async getEvidenceInbox({ dad_id }) {
+      await requireDad(dad_id);
+      const rows = await vault.listEvidenceInbox(dad_id);
+      log("evidence.inbox", { dad: dad_id, n: rows.length });
+      return {
+        routing: EVIDENCE_ROUTING,
+        items: rows.map((r) => toEvidenceLog(r)),
+      };
     },
 
     // GET /vault/chip_entry {dad_id}
