@@ -76,6 +76,7 @@ export const PHASE1_ROUTES = [
   "GET /vault/export",
   "GET /vault/search",
   "POST /vault/evidence/log",
+  "POST /vault/chip/turn",
   "GET /vault/evidence/inbox",
   "POST /vault/logout",
   "POST /vault/panic",
@@ -651,6 +652,16 @@ export async function handleBffRequest(bff, req, url, body) {
     return { status: 200, body: rows };
   }
 
+
+
+  // Chip one-Next. One blurt, one track. Hash only on a file cue.
+  // Log hygiene: track enum only — never the blurt, never a filename.
+  if (method === "POST" && path === "/vault/chip/turn") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    log("http.chip.turn", { dad: dad_id });
+    return { status: 200, body: await bff.postChipTurn({ ...body, dad_id }) };
+  }
 
   // Evidence skeleton (Slice 23). Hash only — never a vent, never bytes.
   // Log hygiene: ids only, never the filename guess.

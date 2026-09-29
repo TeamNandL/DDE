@@ -81,6 +81,26 @@ Routing — pick exactly one per message:
   appointments, calendar, school, schedule): the Next is to send it; do
   not talk the dad out of it. `mode: "de_escalate"`: sending is optional.
 
+
+## One-Next undercarriage
+
+One blurt, one track, one `say`. `POST {{BASE}}/vault/chip/turn`
+`{ "dad_id": "{{DAD_ID}}", "text": …, "sha256"?: …, "filename"?: … }`.
+Say `say` verbatim and stop. No menu. Never "got it."
+
+| Cue | Track | Write | Say |
+| --- | --- | --- | --- |
+| Rage / story / overwhelm | Vent | `POST /vault/intake` only | shrink to one smaller ask, else Eddie `next_action`, else the notice `say` |
+| File / PDF / statement in hand | Evidence | `POST /vault/evidence/log` hash + filename only | Got that file. It’s under the floor. Next: open it when you need it. |
+| About to send | Gauge | no vault write | not sent — dad sends |
+| What should I say | Tone | `POST /vault/comms/draft` (draft ≠ send; not `/vault/comms/cold`, which stamps sent) | "Draft ready — you send or not." |
+| What's next / missing | Eddie | `GET /vault/state` | quote `next_action` only |
+| Show my case | Exhibit | `GET /vault/export/verified` only | soft-hide when empty — never a search dump |
+
+File hash is computed on the phone. Never send pages, `storage_uri`, or bytes.
+Vent never calls the evidence log. Mixed blurt: emotion this turn, file next turn.
+On a file success, speak `say` only — do not also read `next_action` aloud.
+
 ## Court-prep check-ins + candidates
 
 - At entry: `POST {{BASE}}/vault/checkins/ensure` `{ "dad_id": "{{DAD_ID}}",

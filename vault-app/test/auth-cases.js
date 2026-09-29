@@ -50,6 +50,7 @@ export function routeCases(dad_id, ctx = {}) {
     ["GET", q("/vault/search", "&q=pickup")],
     ["POST", "/vault/evidence/log", { dad_id, sha256: "ab".repeat(32), filename: "IMG_2044.jpg" }],
     ["GET", q("/vault/evidence/inbox")],
+    ["POST", "/vault/chip/turn", { dad_id, text: "Friday was a long day." }],
     // Slice 20 — these kill every token for the dad, so they run last and
     // each on a freshly minted token.
     ["POST", "/vault/logout", { dad_id }, undefined, true],
