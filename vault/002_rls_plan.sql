@@ -1,4 +1,8 @@
--- DDE vault — RLS PLAN (kickoff §3). DRAFT ONLY — DO NOT RUN IN PHASE 1.
+-- DDE vault — RLS PLAN (kickoff §3). DRAFT ONLY — DO NOT RUN.
+--
+-- SUPERSEDED by vault/015_auth_rls.sql (Slice 18), which enforces RLS on
+-- the existing Postgres + BFF Bearer path with a dde_app role and
+-- dde_current_dad() instead of Supabase auth.uid(). Kept for history.
 -- vault-app never applies this file (schema:apply and test 9 use 001 only).
 --
 -- RLS is documented now and enforced when the auth gate lands (Supabase

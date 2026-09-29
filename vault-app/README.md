@@ -22,10 +22,25 @@ No real case data. No secrets in git.
   tax ids, numbered street addresses, account/routing numbers, kid school
   ids are redacted before anything is stored — state/search/notice never
   carry raw PII, and the stripped values never reach logs (counts only)
+- Emotion-notice arm: a pure pain + date vent ("miss the kids… since April
+  19 limited time") with no incident keyword still writes one claim event
+  (`event_type='other'`) whose notes carry the cold facts (limited time
+  since DATE, empty-house wait) — so notice always has a sentence; plain
+  text without pain markers still writes nothing
 - Notice: `POST /vault/notice` (or intake `make_notice=true`) produces a
   cold, court-safe, PII-free `noticed_text` from a claim event and stamps
   `noticed_at` — the row **stays `claim` until verified**, so Exhibit
   (`verified_export` / `affidavit_support`) never picks it up on notice alone
+- Return loop: `POST /vault/return` stamps `state.last_next` from the One
+  Next and hands Chip the plain greeting line ("Last time: ___. How'd it
+  go?") — no tokens/URLs in the line, `line: null` when there is no Next
+  (never invented); the dad's `answer` runs the same intake pipeline and
+  writes claim
+- Soft progress: `state.this_week_done` / `this_week_total` (total clamps
+  3–7, done 0–total; `missing[]` capped at 7 short strings) and
+  `GET /vault/progress` → `{line: "3 of 5 this week", missing_one, grade}` —
+  plain speech, nulls when nothing to say, grade is warm or absent (never
+  shame)
 - `verified_export` is the only read surface for Reporting; it never returns
   claim rows
 - `month_summary` gate: `pipe='verified'` only when every `source_ref`
@@ -45,7 +60,10 @@ src/tokens.js       durable provision tokens (hash-only; PG or .dde-tokens.json)
 src/server.js       optional HTTP for those functions (`npm run serve`)
 public/chip-entry.html  Chip deep-link entry (GET /app, GET /chip/entry)
 CHIP_APP.md         Chip canonical contract (provision → state → intake)
-CHIP_OPERATOR_BLURB.md  paste block for Chip description
+CHIP_PUBLIC_TEMPLATE.md  PUBLIC Chip (demo/door) — zero secrets, test-enforced
+CHIP_DAD_TEMPLATE.md     per-dad Chip (vault-bound) — placeholder slots, hash-only bind
+CHIP_OPERATOR_BLURB.md  operator/eng reference (never the public paste)
+test/chip-template.test.js  public-template leak guard + bind-flow proof
 scripts/chip-deeplink-curl.sh  localhost tip smoke (entry + Bearer)
 Dockerfile          production image: `node src/server.js --http` on 0.0.0.0:$PORT
 HOSTING.md          Fly.io / Render free-tier deploy (DATABASE_URL is a secret)
@@ -66,6 +84,9 @@ Schema lives next to the app, not inside it:
 - `vault/002_rls_plan.sql` — **draft only, do not run in Phase 1**
 - `vault/003_fts.sql` — generated `search_tsv` + GIN indexes (applied with 001)
 - `vault/004_noticed.sql` — `events.noticed_at` / `events.noticed_text` (applied with 001)
+- `vault/005_return.sql` — `state.last_next` / `state.last_next_at` (applied with 001)
+- `vault/006_progress.sql` — `state.this_week_done` / `state.this_week_total` (applied with 001)
+- `vault/007_cold_ask.sql` — `state.last_next_kind` / `state.last_ask_summary` (applied with 001)
 
 ## Tests
 
@@ -83,6 +104,12 @@ npm test
 
 Log output from tests 1–8 lands in `test-output/run.log` for the hygiene grep
 (test 7 / §8 report).
+
+CI (`.github/workflows/test.yml`) runs both legs on every push and PR:
+memory (no `DATABASE_URL`, PG tests skip as BLOCKED) and the **full suite
+against a stock Postgres 16 service with zero skips** — the PG job fails if
+anything skipped, so a silently-BLOCKED leg can never read as green. The
+service credential is CI-throwaway; real `DATABASE_URL` stays host-side.
 
 ### Test 9 — one command
 
@@ -108,6 +135,16 @@ Intended rented target: Supabase project **dde-vault**. Without
 `DATABASE_URL`, or where the network cannot reach the host, test 9
 **skips** and counts as **BLOCKED**, not passed.
 
+The PG legs (test 9, PG search, PG progress persist) have been proven
+green against stock Postgres 16. Note: `003_fts.sql` originally used
+`array_to_string` inside generated columns — that function is STABLE, not
+IMMUTABLE, so **schema apply crashed on any fresh stock Postgres at boot**
+(and a host like Railway then keeps serving the previous build, which
+looks like writes silently not persisting). 003 now ships an IMMUTABLE
+`dde_join_words` wrapper; the apply is clean and idempotent on fresh and
+existing databases alike. If a deploy ever crash-looped on this, deploying
+tip clears it.
+
 
 ## Vault search (FTS)
 
@@ -127,11 +164,15 @@ Off unless you start it. Product bots call these Phase 1 routes:
 | --- | --- | --- |
 | `POST` | `/vault/intake` | `{ dad_id, text }` → `{ written, chase }`; with `make_notice: true` also `{ noticed_text, event_id }` |
 | `POST` | `/vault/notice` | `{ dad_id, event_id? }` → `{ noticed_text, event_id }` (no `event_id` → latest event; pipe stays `claim`) |
+| `POST` | `/vault/return` | `{ dad_id, answer? }` → `{ last_next, line, progress_line, written? }` (`line: null` when no Next; `answer` becomes ONE claim event on the return beat — harm/PII/venom rails, `written: 0|1`; blank answer → 400) |
+| `POST` | `/vault/missing/fill` | `{ dad_id, answer }` → `{ written, missing_one, progress_line }` (closes `missing[0]` as one claim event, bumps `this_week_done` when a total is set; empty checklist → `written: 0`, nothing invented; harm/PII/venom rails apply to the answer) |
+| `POST` | `/vault/missing/seed` | `{ dad_id, pack? }` → `{ written, missing_one, progress_line }` (empty checklist only: seeds 5 PII-safe kids-facts blanks, counters 5/0 only when both were null; non-empty → `written: 0`, no overwrite) |
 | `POST` | `/vault/provision` | `{ dad_id? }` → `{ dad_id, token }` (**only** create path; opaque token; **hash** persisted) |
 
 **Auth (minimal):** After provision, send `Authorization: Bearer <token>` or `X-DDE-Token: <token>` on intake/state/comms/export. Missing/wrong → **401**; token for another dad → **403**; unprovisioned dad → **404** `unknown dad`. Writes never silent-create state. **Durable tokens:** SHA-256 hash only in Postgres (`dde_provision_tokens`) when vault is on `DATABASE_URL`, else `.dde-tokens.json` (override with `DDE_TOKENS_PATH`).
 | `GET` | `/vault/state` | `?dad_id=` → state row; **404** `{ "error": "unknown dad" }` if none (read-only) |
-| `PUT` | `/vault/state` | `{ dad_id, phase?, this_week?, missing?, next_action? }` |
+| `PUT` | `/vault/state` | `{ dad_id, phase?, this_week?, missing?, next_action?, this_week_done?, this_week_total?, last_next_kind?, last_ask_summary? }` (total clamps 3–7, done 0–total, missing ≤ 7 short strings; free text + cold-ask fields PII-stripped) |
+| `GET` | `/vault/progress` | `?dad_id=` → `{ line, missing_one, grade, progress_line }` (plain speech; nulls when nothing to say; `progress_line` = the one ADHD-short Chip line: `"N of M this week[; still open: <one item>]"`, also on the return payload) |
 | `POST` | `/vault/comms/cold` | `{ dad_id, body_cold, channel }` → `{ id }` |
 | `POST` | `/vault/comms/pull` | `{ dad_id, channel, source_ref, body_cold?, sent_at? }` → `{ id }` |
 | `GET` | `/vault/export/verified` | `?dad_id=` → verified rows only |
@@ -181,12 +222,15 @@ DATABASE_URL=... npm run schema:apply
 ```
 
 Applies `vault/001_schema.sql` + `vault/003_fts.sql` + `vault/004_noticed.sql`
-idempotently. Leaves RLS disabled. The BFF store factory applies the same
-files on boot, so a deployed host (Railway / Fly / Render / Docker) picks up
-`004_noticed.sql` automatically on next start. To apply by hand instead:
++ `vault/005_return.sql` + `vault/006_progress.sql` idempotently. Leaves RLS
+disabled. The BFF store factory applies the same files on boot, so a deployed
+host (Railway / Fly / Render / Docker) picks up new migrations automatically
+on next start. To apply by hand instead:
 
 ```
 psql "$DATABASE_URL" -f vault/004_noticed.sql
+psql "$DATABASE_URL" -f vault/005_return.sql
+psql "$DATABASE_URL" -f vault/006_progress.sql
 ```
 
 ## Rails (non-negotiable)

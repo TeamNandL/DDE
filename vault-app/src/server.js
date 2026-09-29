@@ -18,8 +18,10 @@ import { parseArgs } from "node:util";
 import { makeBff } from "./bff.js";
 import { databaseUrl, openStore } from "./store.js";
 import { defaultJsonPath, openTokenStore } from "./tokens.js";
+import { defaultOpsPath, openOpsStore } from "./opsstore.js";
 import { DEMO_DAD_ID, seedDemo } from "./demo.js";
 import { log } from "./logger.js";
+import { bindDad, runRequestScope } from "./scope.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CHIP_ENTRY_HTML = readFileSync(resolve(__dirname, "../public/chip-entry.html"), "utf8");
@@ -34,13 +36,50 @@ const MAX_BODY = 64 * 1024;
 export const PHASE1_ROUTES = [
   "POST /vault/intake",
   "POST /vault/notice",
+  "POST /vault/return",
+  "POST /vault/tell",
+  "POST /vault/missing/fill",
+  "POST /vault/missing/seed",
   "POST /vault/provision",
   "GET /vault/state",
   "PUT /vault/state",
+  "GET /vault/progress",
+  "GET /vault/candidates",
+  "POST /vault/plan/topics/ensure",
+  "GET /vault/plan/topics",
+  "POST /vault/plan/answer",
+  "POST /vault/plan/stuck",
+  "POST /vault/plan/park",
+  "POST /vault/plan/draft/regenerate",
+  "GET /vault/plan/draft",
+  "POST /vault/translate/explain",
+  "GET /vault/translate/last",
+  "GET /vault/translate/list",
+  "POST /vault/involvement/ensure",
+  "GET /vault/involvement",
+  "POST /vault/involvement/field",
+  "GET /vault/involvement/next",
+  "GET /vault/involvement/export",
+  "POST /vault/legal/intake",
+  "GET /vault/legal/intake",
+  "POST /vault/legal/handoff",
+  "POST /vault/candidates/review",
+  "GET /vault/notifications",
+  "POST /vault/checkins/ensure",
+  "POST /vault/notifications/mark",
+  "GET /vault/chip_entry",
   "POST /vault/comms/cold",
+  "POST /vault/comms/draft",
+  "GET /vault/comms/drafts",
   "POST /vault/comms/pull",
   "GET /vault/export/verified",
+  "GET /vault/export",
   "GET /vault/search",
+  "POST /vault/evidence/log",
+  "POST /vault/chip/turn",
+  "GET /vault/evidence/inbox",
+  "POST /vault/logout",
+  "POST /vault/panic",
 ];
 
 function json(res, status, body) {
@@ -52,11 +91,12 @@ function json(res, status, body) {
   res.end(payload);
 }
 
-function send(res, status, body, contentType = "application/json; charset=utf-8") {
-  const payload = typeof body === "string" ? body : JSON.stringify(body);
+function send(res, status, body, contentType = "application/json; charset=utf-8", headers = {}) {
+  const payload = typeof body === "string" || Buffer.isBuffer(body) ? body : JSON.stringify(body);
   res.writeHead(status, {
     "content-type": contentType,
     "content-length": Buffer.byteLength(payload),
+    ...headers,
   });
   res.end(payload);
 }
@@ -122,17 +162,17 @@ export function extractToken(req) {
 
 /**
  * Tenancy + auth for every dad-scoped route except provision.
- * Order: dad exists → 404 unknown dad; then token → 401/403.
- * (Unprovisioned curls without a token must still get 404, not 401.)
+ * Bearer gate first, always. A dad that does not exist — wiped (Slice 21)
+ * or never provisioned — answers exactly like a revoked token: 401
+ * {"error":"unauthorized"}. Nothing distinguishes the two (Nick F1 ruling).
  */
+// Auth matrix (Slice 18, amended Slice 21): no / bad / revoked / expired
+// token → 401 · unknown dad → 401 (same body) · token for another existing
+// dad → 403 · own token → the route runs, and every SQL statement after
+// this point runs as dde_app bound to this dad (RLS).
 async function gateDad(bff, req, dad_id) {
-  const state = await bff.getVaultState({ dad_id });
-  if (!state) {
-    const err = new Error("unknown dad");
-    err.status = 404;
-    throw err;
-  }
   await bff.checkToken(dad_id, extractToken(req));
+  bindDad(dad_id);
 }
 
 export async function handleBffRequest(bff, req, url, body) {
@@ -178,6 +218,18 @@ export async function handleBffRequest(bff, req, url, body) {
     return { status: 200, body: out };
   }
 
+  // Token lifecycle (Slice 20). Same gate as every dad route: a dead token
+  // can't log itself out (401). Logout is ALL-DEVICE; /vault/panic is the
+  // same action under the name the dad sees ("log out everywhere now").
+  // No dad-facing revoke route: revoke is Nick-only (src/cli-token.js).
+  // New token after logout: operator reissue (CLI).
+  if (method === "POST" && (path === "/vault/logout" || path === "/vault/panic")) {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    log(path === "/vault/panic" ? "http.panic" : "http.logout", { dad: dad_id });
+    return { status: 200, body: await bff.postVaultLogout({ dad_id }) };
+  }
+
   if (method === "POST" && path === "/vault/intake") {
     const dad_id = requireDadId(body.dad_id);
     await gateDad(bff, req, dad_id);
@@ -187,15 +239,89 @@ export async function handleBffRequest(bff, req, url, body) {
       err.status = 400;
       throw err;
     }
-    log("http.intake", { dad: dad_id });
+    let source;
+    if (body.source !== undefined && body.source !== null && body.source !== "") {
+      if (body.source !== "statement") {
+        const err = new Error("unknown source");
+        err.status = 400;
+        throw err;
+      }
+      source = body.source;
+    }
+    log("http.intake", { dad: dad_id, source: source ?? "vent" });
     return {
       status: 200,
       body: await bff.postVaultIntake({
         dad_id,
         text,
         make_notice: body.make_notice === true,
+        source,
       }),
     };
+  }
+
+  if (method === "POST" && path === "/vault/return") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    // Absent answer = greeting only; a PRESENT answer must carry words.
+    let answer;
+    if (body.answer !== undefined && body.answer !== null) {
+      if (typeof body.answer !== "string" || !body.answer.trim()) {
+        const err = new Error("answer must be a non-empty string");
+        err.status = 400;
+        throw err;
+      }
+      answer = body.answer;
+    }
+    // Log hygiene: ids/flags only — never the line or the answer.
+    log("http.return", { dad: dad_id, answered: Boolean(answer) });
+    return { status: 200, body: await bff.postVaultReturn({ dad_id, answer }) };
+  }
+
+  if (method === "POST" && path === "/vault/tell") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    if (typeof body.story !== "string" || !body.story.trim()) {
+      const err = new Error("story must be a non-empty string");
+      err.status = 400;
+      throw err;
+    }
+    // Log hygiene: ids/enums only — never the story or the feedback.
+    log("http.tell", { dad: dad_id });
+    return {
+      status: 200,
+      body: await bff.postVaultTell({ dad_id, channel: body.channel, story: body.story }),
+    };
+  }
+
+  if (method === "POST" && path === "/vault/missing/seed") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    let pack;
+    if (body.pack !== undefined && body.pack !== null && body.pack !== "") {
+      if (typeof body.pack !== "string") {
+        const err = new Error("pack must be a string");
+        err.status = 400;
+        throw err;
+      }
+      pack = body.pack;
+    }
+    log("http.missing.seed", { dad: dad_id });
+    return { status: 200, body: await bff.postMissingSeed({ dad_id, pack }) };
+  }
+
+  if (method === "POST" && path === "/vault/missing/fill") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    const answer = typeof body.answer === "string" ? body.answer : "";
+    if (!answer.trim()) {
+      const err = new Error("answer is required");
+      err.status = 400;
+      throw err;
+    }
+    // Log hygiene: ids only — never the answer or the item.
+    log("http.missing.fill", { dad: dad_id });
+    return { status: 200, body: await bff.postMissingFill({ dad_id, answer }) };
   }
 
   if (method === "POST" && path === "/vault/notice") {
@@ -218,9 +344,8 @@ export async function handleBffRequest(bff, req, url, body) {
   if (method === "GET" && path === "/vault/state") {
     // Read-only: never insert/upsert/create on GET.
     const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
-    await gateDad(bff, req, dad_id);
+    await gateDad(bff, req, dad_id); // gate already proved the dad exists (else 401)
     const state = await bff.getVaultState({ dad_id });
-    if (!state) return { status: 404, body: { error: "unknown dad" } };
     log("http.state.get", { dad: dad_id });
     return { status: 200, body: state };
   }
@@ -231,6 +356,231 @@ export async function handleBffRequest(bff, req, url, body) {
     const state = await bff.putVaultState(body);
     log("http.state.put", { dad: dad_id });
     return { status: 200, body: state };
+  }
+
+  if (method === "GET" && path === "/vault/chip_entry") {
+    // Read-only: never writes, never stamps last_next.
+    const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
+    await gateDad(bff, req, dad_id);
+    log("http.chip_entry", { dad: dad_id });
+    return { status: 200, body: await bff.getChipEntry({ dad_id }) };
+  }
+
+  if (method === "GET" && path === "/vault/progress") {
+    // Read-only, same gate as state.
+    const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
+    await gateDad(bff, req, dad_id);
+    log("http.progress", { dad: dad_id });
+    return { status: 200, body: await bff.getVaultProgress({ dad_id }) };
+  }
+
+  // Parenting Plan seat (Slice 14). Log hygiene: ids + topic keys only.
+  if (method === "POST" && path === "/vault/plan/topics/ensure") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    log("http.plan.ensure", { dad: dad_id });
+    return { status: 200, body: await bff.postPlanEnsure({ dad_id }) };
+  }
+
+  if (method === "GET" && path === "/vault/plan/topics") {
+    const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
+    await gateDad(bff, req, dad_id);
+    log("http.plan.topics", { dad: dad_id });
+    return { status: 200, body: await bff.getPlanTopics({ dad_id, depth: q.get("depth") || "simple" }) };
+  }
+
+  if (method === "POST" && path === "/vault/plan/answer") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    log("http.plan.answer", { dad: dad_id });
+    return {
+      status: 200,
+      body: await bff.postPlanAnswer({
+        dad_id,
+        topic: body.topic,
+        choice: body.choice,
+        stance: body.stance,
+        depth: body.depth,
+        detail: body.detail,
+      }),
+    };
+  }
+
+  if (method === "POST" && (path === "/vault/plan/stuck" || path === "/vault/plan/park")) {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    log(path === "/vault/plan/stuck" ? "http.plan.stuck" : "http.plan.park", { dad: dad_id });
+    const args = { dad_id, topic: body.topic };
+    return {
+      status: 200,
+      body: path === "/vault/plan/stuck" ? await bff.postPlanStuck(args) : await bff.postPlanPark(args),
+    };
+  }
+
+  if (method === "POST" && path === "/vault/plan/draft/regenerate") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    log("http.plan.regenerate", { dad: dad_id });
+    return { status: 200, body: await bff.postPlanRegenerate({ dad_id, kind: body.kind ?? "full" }) };
+  }
+
+  if (method === "GET" && path === "/vault/plan/draft") {
+    const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
+    await gateDad(bff, req, dad_id);
+    log("http.plan.draft", { dad: dad_id });
+    return { status: 200, body: await bff.getPlanDraft({ dad_id, kind: q.get("kind") || "full" }) };
+  }
+
+  // Legal Intake seat (Slice 17). Log hygiene: ids only — never the "what".
+  if (method === "POST" && path === "/vault/legal/intake") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    log("http.legal.intake", { dad: dad_id });
+    return {
+      status: 200,
+      body: await bff.postLegalIntake({ dad_id, who: body.who, what: body.what, urgency: body.urgency }),
+    };
+  }
+
+  if (method === "GET" && path === "/vault/legal/intake") {
+    const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
+    await gateDad(bff, req, dad_id);
+    log("http.legal.get", { dad: dad_id });
+    return { status: 200, body: await bff.getLegalIntake({ dad_id, id: q.get("id") || undefined }) };
+  }
+
+  if (method === "POST" && path === "/vault/legal/handoff") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    log("http.legal.handoff", { dad: dad_id });
+    return { status: 200, body: await bff.postLegalHandoff({ dad_id, id: body.id }) };
+  }
+
+  // Involvement Cheat Sheet (Slice 16). Log hygiene: ids only — never kid
+  // labels or values.
+  if (method === "POST" && path === "/vault/involvement/ensure") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    log("http.involvement.ensure", { dad: dad_id });
+    return { status: 200, body: await bff.postInvolvementEnsure({ dad_id, kid: body.kid }) };
+  }
+
+  if (method === "POST" && path === "/vault/involvement/field") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    log("http.involvement.field", { dad: dad_id });
+    return {
+      status: 200,
+      body: await bff.postInvolvementField({
+        dad_id,
+        kid: body.kid,
+        field: body.field,
+        value: body.value,
+        asked_on: body.asked_on,
+        asked_via: body.asked_via,
+        outcome: body.outcome,
+      }),
+    };
+  }
+
+  if (
+    method === "GET" &&
+    (path === "/vault/involvement" || path === "/vault/involvement/next" || path === "/vault/involvement/export")
+  ) {
+    const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
+    await gateDad(bff, req, dad_id);
+    const kid = q.get("kid") || undefined;
+    if (path === "/vault/involvement/next") {
+      log("http.involvement.next", { dad: dad_id });
+      return { status: 200, body: await bff.getInvolvementNext({ dad_id, kid }) };
+    }
+    if (path === "/vault/involvement/export") {
+      log("http.involvement.export", { dad: dad_id });
+      return { status: 200, body: await bff.getInvolvementExport({ dad_id, kid }) };
+    }
+    log("http.involvement.list", { dad: dad_id });
+    return { status: 200, body: await bff.getInvolvement({ dad_id, kid }) };
+  }
+
+  // Process Translator (Slice 15). Log hygiene: ids only — never the paste.
+  if (method === "POST" && path === "/vault/translate/explain") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    log("http.translate.explain", { dad: dad_id });
+    return { status: 200, body: await bff.postTranslateExplain({ dad_id, term: body.term, text: body.text }) };
+  }
+
+  if (method === "GET" && (path === "/vault/translate/last" || path === "/vault/translate/list")) {
+    const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
+    await gateDad(bff, req, dad_id);
+    log(path === "/vault/translate/last" ? "http.translate.last" : "http.translate.list", { dad: dad_id });
+    return {
+      status: 200,
+      body:
+        path === "/vault/translate/last"
+          ? await bff.getTranslateLast({ dad_id })
+          : await bff.getTranslateList({ dad_id, limit: q.get("limit") }),
+    };
+  }
+
+  if (method === "GET" && path === "/vault/candidates") {
+    const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
+    await gateDad(bff, req, dad_id);
+    // Log hygiene: ids only — never quotes or lines.
+    log("http.candidates", { dad: dad_id });
+    const include_tossed = q.get("include_tossed") === "true";
+    return { status: 200, body: await bff.getVaultCandidates({ dad_id, include_tossed }) };
+  }
+
+  if (method === "POST" && path === "/vault/candidates/review") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    if (typeof body.id !== "string" || !UUID_RE.test(body.id)) {
+      const err = new Error("id must be a uuid");
+      err.status = 400;
+      throw err;
+    }
+    log("http.candidates.review", { dad: dad_id });
+    return {
+      status: 200,
+      body: await bff.postCandidateReview({ dad_id, id: body.id, review: body.review }),
+    };
+  }
+
+  if (method === "GET" && path === "/vault/notifications") {
+    const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
+    await gateDad(bff, req, dad_id);
+    log("http.notifications", { dad: dad_id });
+    return { status: 200, body: await bff.getVaultNotifications({ dad_id }) };
+  }
+
+  if (method === "POST" && path === "/vault/checkins/ensure") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    log("http.checkins.ensure", { dad: dad_id });
+    return {
+      status: 200,
+      body: await bff.postCheckinsEnsure({
+        dad_id,
+        date: body.date,
+        tz_offset_minutes: body.tz_offset_minutes,
+      }),
+    };
+  }
+
+  if (method === "POST" && path === "/vault/notifications/mark") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    if (typeof body.id !== "string" || !UUID_RE.test(body.id)) {
+      const err = new Error("id must be a uuid");
+      err.status = 400;
+      throw err;
+    }
+    log("http.notifications.mark", { dad: dad_id });
+    return {
+      status: 200,
+      body: await bff.postNotificationMark({ dad_id, id: body.id, status: body.status }),
+    };
   }
 
   if (method === "POST" && path === "/vault/comms/cold") {
@@ -245,6 +595,29 @@ export async function handleBffRequest(bff, req, url, body) {
     return { status: 200, body: await bff.postCommsCold(body) };
   }
 
+  if (method === "POST" && path === "/vault/comms/draft") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    if (typeof body.body !== "string" || !body.body.trim()) {
+      const err = new Error("body is required");
+      err.status = 400;
+      throw err;
+    }
+    // Log hygiene: ids only — never the draft text.
+    log("http.comms.draft", { dad: dad_id });
+    return {
+      status: 200,
+      body: await bff.postCommsDraft({ dad_id, body: body.body, kind: body.kind, on_record: body.on_record }),
+    };
+  }
+
+  if (method === "GET" && path === "/vault/comms/drafts") {
+    const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
+    await gateDad(bff, req, dad_id);
+    log("http.comms.drafts", { dad: dad_id });
+    return { status: 200, body: await bff.getCommsDrafts({ dad_id }) };
+  }
+
   if (method === "POST" && path === "/vault/comms/pull") {
     const dad_id = requireDadId(body.dad_id);
     await gateDad(bff, req, dad_id);
@@ -257,6 +630,21 @@ export async function handleBffRequest(bff, req, url, body) {
     return { status: 200, body: await bff.postCommsPull(body) };
   }
 
+  // Slice 21 — the dad's full bundle (zip). Same gate. Records a receipt.
+  // There is NO delete route: delete is Nick-only (src/cli-dad.js).
+  if (method === "GET" && path === "/vault/export") {
+    const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
+    await gateDad(bff, req, dad_id);
+    const out = await bff.getVaultExportZip({ dad_id });
+    log("http.export", { dad: dad_id, bytes: out.bytes });
+    return {
+      status: 200,
+      body: out.zip,
+      contentType: "application/zip",
+      headers: { "content-disposition": `attachment; filename="dde-export-${out.exported_at.slice(0, 10)}.zip"` },
+    };
+  }
+
   if (method === "GET" && path === "/vault/export/verified") {
     const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
     await gateDad(bff, req, dad_id);
@@ -264,6 +652,32 @@ export async function handleBffRequest(bff, req, url, body) {
     return { status: 200, body: rows };
   }
 
+
+
+  // Chip one-Next. One blurt, one track. Hash only on a file cue.
+  // Log hygiene: track enum only — never the blurt, never a filename.
+  if (method === "POST" && path === "/vault/chip/turn") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    log("http.chip.turn", { dad: dad_id });
+    return { status: 200, body: await bff.postChipTurn({ ...body, dad_id }) };
+  }
+
+  // Evidence skeleton (Slice 23). Hash only — never a vent, never bytes.
+  // Log hygiene: ids only, never the filename guess.
+  if (method === "POST" && path === "/vault/evidence/log") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    log("http.evidence.log", { dad: dad_id });
+    return { status: 200, body: await bff.postEvidenceLog({ ...body, dad_id }) };
+  }
+
+  if (method === "GET" && path === "/vault/evidence/inbox") {
+    const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
+    await gateDad(bff, req, dad_id);
+    log("http.evidence.inbox", { dad: dad_id });
+    return { status: 200, body: await bff.getEvidenceInbox({ dad_id }) };
+  }
 
   if (method === "GET" && path === "/vault/search") {
     const dad_id = requireDadId(body.dad_id || q.get("dad_id"));
@@ -298,9 +712,9 @@ export function createServer(bff) {
       if (req.method !== "GET" && req.method !== "HEAD") {
         body = await readBody(req);
       }
-      const result = await handleBffRequest(bff, req, url, body);
+      const result = await runRequestScope(() => handleBffRequest(bff, req, url, body));
       const ct = result.contentType || "application/json; charset=utf-8";
-      send(res, result.status, result.body, ct);
+      send(res, result.status, result.body, ct, result.headers || {});
     } catch (err) {
       const status = Number(err?.status);
       const msg = String(err?.message || "bad request");
@@ -375,7 +789,10 @@ export async function main(argv = process.argv.slice(2)) {
     : await openTokenStore({
         jsonPath: process.env.DDE_TOKENS_PATH || defaultJsonPath(),
       });
-  const bff = makeBff(store.vault, { tokenStore });
+  const opsStore = usePostgres
+    ? await openOpsStore({ query: store.query })
+    : await openOpsStore({ jsonPath: defaultOpsPath() });
+  const bff = makeBff(store.vault, { tokenStore, opsStore });
   if (values.demo) {
     await seedDemo(bff, DEMO_DAD_ID);
   }
@@ -394,6 +811,7 @@ export async function main(argv = process.argv.slice(2)) {
   const shutdown = async () => {
     server.close();
     await tokenStore.close();
+    await opsStore.close();
     await store.close();
   };
   process.on("SIGINT", () => {

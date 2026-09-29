@@ -1,6 +1,11 @@
-# Chip operator blurb (paste into Chip description)
+# Chip operator blurb (ENG setup notes — not a public paste)
 
-Copy everything below the line into the Chip / Dad Grok template description.
+Two-object model: the **public** Chip description comes from
+[`CHIP_PUBLIC_TEMPLATE.md`](CHIP_PUBLIC_TEMPLATE.md) (demo/door, zero
+secrets — test-enforced) and each **per-dad** Chip from
+[`CHIP_DAD_TEMPLATE.md`](CHIP_DAD_TEMPLATE.md) (vault-bound, placeholders
+filled at bind). The block below is the operator/eng reference only —
+never paste it into the public object (it names live bases and auth).
 
 ---
 
@@ -15,7 +20,10 @@ Base (live): `https://dde-vault-bff-production.up.railway.app`
 1. **Provision once** (eng/install): `POST {BASE}/vault/provision` → `{ dad_id, token }`
 2. **Deep-link (hash-only)** into Chip: open `{BASE}/app#dad_id=…&token=…` (or `/chip/entry#…`) — **never** `?token=` query string
 3. **State / One Next**: `GET {BASE}/vault/state?dad_id=…` + `Authorization: Bearer <token>` → show `phase`, `missing[]`, and **Next = `next_action`**
-4. **Vent**: `POST {BASE}/vault/intake` `{ dad_id, text }` + Bearer → then refresh state
+4. **Vent**: `POST {BASE}/vault/intake` `{ dad_id, text, make_notice: true }` + Bearer → if the reply has `say`, say it verbatim and stop (no Next that turn); otherwise refresh state
+5. **Fork**: the intake reply's `fork` ("Want to tell me? Talk or text.") is the next beat → `POST {BASE}/vault/tell` `{ dad_id, channel: talk|text, story }` + Bearer → say `feedback` verbatim
+6. **Coach** (dad asks for words): Chip writes one cold draft → `POST {BASE}/vault/comms/draft` `{ dad_id, body }` + Bearer → show `body`, say `say` verbatim (draft ≠ send, one Next, one beat)
+7. **Stay in chat**: never open OFW, Stan, a portal, or any login page
 
 Never call the database direct. Token hash persists across BFF restart (Postgres when vault on PG; else `.dde-tokens.json`). Fake family only in demos.
 

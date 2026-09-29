@@ -120,7 +120,7 @@ test("durable JSON: provision → reopen store → same Bearer 200; bad 401; cro
   }
 });
 
-test("durable tokens: unknown dad → 404 before token check", async () => {
+test("durable tokens: unknown dad → 401 with the same body as a bad token (F1)", async () => {
   const store = await openTokenStore({ memory: true });
   const s = await startWithStore(store);
   try {
@@ -128,8 +128,8 @@ test("durable tokens: unknown dad → 404 before token check", async () => {
     const res = await jsonReq(s.base, "GET", `/vault/state?dad_id=${unknown}`, null, {
       token: "dde-stub-whatever",
     });
-    assert.equal(res.status, 404);
-    assert.deepEqual(res.data, { error: "unknown dad" });
+    assert.equal(res.status, 401);
+    assert.deepEqual(res.data, { error: "unauthorized" });
   } finally {
     await s.close();
   }

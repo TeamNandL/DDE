@@ -1,0 +1,72 @@
+# DDE vault-app test suite — the Razor gate, automated.
+#
+# Two legs on every push and PR:
+#   memory   — the suite as it runs with no DATABASE_URL (PG legs skip as
+#              BLOCKED, exactly like a laptop without the env var)
+#   postgres — the FULL suite against a stock Postgres 16 service, zero
+#              skips: boot-time schema apply, test 9, FTS search, persist
+#              proofs. This is what "Full Postgres suite green" means.
+#
+# No secrets: the service container credential below is throwaway CI-only
+# state, never a real database. DATABASE_URL for real hosts stays in host
+# env only (HOSTING.md).
+
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  memory:
+    name: memory store (no DATABASE_URL)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: vault-app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: vault-app/package-lock.json
+      - run: npm ci
+      - run: npm test
+
+  postgres:
+    name: full suite on Postgres 16
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: dde
+          POSTGRES_PASSWORD: ci-throwaway
+          POSTGRES_DB: vault
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dde"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: vault-app
+    env:
+      DATABASE_URL: postgresql://dde:ci-throwaway@127.0.0.1:5432/vault
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: vault-app/package-lock.json
+      - run: npm ci
+      # One run; then fail if anything skipped — the PG leg silently
+      # degrading to BLOCKED skips must never read as green.
+      - name: npm test (zero skips required)
+        run: |
+          npm test 2>&1 | tee /tmp/tap.out
+          grep -q "^# skipped 0$" /tmp/tap.out || { echo "PG leg skipped tests — DATABASE_URL did not reach the suite"; exit 1; }

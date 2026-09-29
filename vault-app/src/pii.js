@@ -107,6 +107,14 @@ function isoDay(v) {
 }
 
 export function buildNoticeText(event) {
+  // Statement drops: the notes already ARE the one cold sentence — no
+  // parenting-time heading (wrong label, duplicate date), never receipt
+  // tone.
+  if (/^Statement\b/.test(event.notes ?? "")) {
+    return stripPii(
+      `${event.notes} This entry is recorded as a parent statement (claim); verification against the record is pending.`,
+    ).text;
+  }
   const label = EVENT_LABELS[event.event_type] ?? "Parenting-time event";
   const parts = [`${label} on ${isoDay(event.occurred_at)}.`];
   if (event.notes) {

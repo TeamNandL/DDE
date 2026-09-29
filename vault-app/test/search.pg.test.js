@@ -34,6 +34,10 @@ test(
     const dadB = randomUUID();
 
     try {
+      // Intake requires provisioned dads (this test predated the gate —
+      // it had never run for lack of DATABASE_URL).
+      await bff.postVaultProvision({ dad_id: dadA });
+      await bff.postVaultProvision({ dad_id: dadB });
       await bff.postVaultIntake(
         { dad_id: dadA, text: DENIED_VISIT_VENT },
         { referenceDate: MONDAY },
@@ -51,26 +55,27 @@ test(
         body_cold: "Confirming the Maple Street parking lot for the sitter handoff.",
       });
 
-      // (a) tenancy both directions.
+      // (a) tenancy both directions. Search returns { mode: "fts", hits }.
       const aForB = await bff.getVaultSearch({ dad_id: dadA, q: "Maple sitter" });
-      assert.equal(aForB.length, 0, "dad A cannot see dad B hits");
+      assert.equal(aForB.mode, "fts");
+      assert.equal(aForB.hits.length, 0, "dad A cannot see dad B hits");
       const bForA = await bff.getVaultSearch({ dad_id: dadB, q: "weekend visit" });
-      assert.equal(bForA.length, 0, "dad B cannot see dad A hits");
+      assert.equal(bForA.hits.length, 0, "dad B cannot see dad A hits");
       const aOwn = await bff.getVaultSearch({ dad_id: dadA, q: "weekend visit" });
-      assert.ok(aOwn.length >= 1, "FTS finds the denied-visit claim");
-      assert.ok(aOwn.every((r) => r.dad_id === dadA));
-      const evHit = aOwn.find((r) => r.source_table === "events");
+      assert.ok(aOwn.hits.length >= 1, "FTS finds the denied-visit claim");
+      assert.ok(aOwn.hits.every((r) => r.dad_id === dadA));
+      const evHit = aOwn.hits.find((r) => r.type === "events");
       assert.equal(evHit?.pipe, "claim");
 
       // (c) verified filter excludes claims.
       const verifiedOnly = await bff.getVaultSearch({ dad_id: dadA, pipe: "verified" });
-      assert.ok(verifiedOnly.length >= 1);
-      assert.ok(verifiedOnly.every((r) => r.pipe === "verified"));
+      assert.ok(verifiedOnly.hits.length >= 1);
+      assert.ok(verifiedOnly.hits.every((r) => r.pipe === "verified"));
 
       // Empty q = filtered list, tenant-scoped.
       const list = await bff.getVaultSearch({ dad_id: dadA });
-      assert.ok(list.length >= 2);
-      assert.ok(list.every((r) => r.dad_id === dadA));
+      assert.ok(list.hits.length >= 2);
+      assert.ok(list.hits.every((r) => r.dad_id === dadA));
 
       // (d) missing dad_id → 400.
       await assert.rejects(bff.getVaultSearch({ q: "weekend" }), (e) => e.status === 400);

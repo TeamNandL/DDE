@@ -37,8 +37,12 @@
     <p><strong>Missing:</strong></p>
     <ul id="missing"></ul>
     <p class="next">Next: <span id="next">—</span></p>
-    <label>Vent / intake<textarea id="text" placeholder="One pain → one Next"></textarea></label>
-    <button type="button" id="btn_send">Send intake</button>
+    <label>Tell Chip<textarea id="text" placeholder="One pain, or a file you have"></textarea></label>
+    <label>File in hand <input id="file" type="file" />
+      <span class="hint">Stays on this phone. Chip notes a fingerprint only — the pages never leave.</span>
+    </label>
+    <button type="button" id="btn_send">Tell Chip</button>
+    <p class="hint">Think someone else has your link or your device? <button type="button" id="btn_panic">Log out everywhere now</button> — every device, instantly. Ask Nick for a fresh link after.</p>
   </div>
 
   <p id="err" hidden></p>
@@ -148,30 +152,75 @@
     renderState(data);
   }
 
-  async function sendIntake() {
+  let pendingFile = null;
+
+  async function sha256Hex(buf) {
+    const digest = await crypto.subtle.digest("SHA-256", buf);
+    return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
+
+  async function noteFile(file) {
+    pendingFile = null;
+    if (!file) return;
+    const buf = await file.arrayBuffer();
+    pendingFile = { sha256: await sha256Hex(buf), filename: file.name || "" };
+  }
+
+  // Vent track writes POST /vault/intake inside chip/turn. This page posts /vault/chip/turn only.
+  async function tellChip() {
     showErr("");
     const { dad_id, token } = getCreds();
     const text = ($("text").value || "").trim();
-    if (!text) { showErr("Type something to vent."); return; }
-    const res = await fetch(BFF + "/vault/intake", {
+    if (!text) { showErr("Say one thing."); return; }
+    const payload = { dad_id, text };
+    if (pendingFile) {
+      payload.sha256 = pendingFile.sha256;
+      payload.filename = pendingFile.filename;
+    }
+    const res = await fetch(BFF + "/vault/chip/turn", {
       method: "POST",
       headers: {
         "content-type": "application/json",
         Authorization: "Bearer " + token,
       },
-      body: JSON.stringify({ dad_id, text }),
+      body: JSON.stringify(payload),
     });
     const bodyText = await res.text();
     let data;
     try { data = JSON.parse(bodyText); } catch { data = { raw: bodyText }; }
     if (!res.ok) {
       showErr((data && data.error) || ("HTTP " + res.status));
-      showRaw(data);
       return;
     }
     $("text").value = "";
-    showRaw({ intake: data });
-    await loadState();
+    $("file").value = "";
+    pendingFile = null;
+    if (data && data.say) $("next").textContent = data.say;
+    const el = $("status");
+    el.hidden = false;
+    el.textContent = (data && data.say) || "";
+  }
+
+  // Panic: all-device logout. Kills every token this dad holds — this
+  // device included — then forgets the pasted creds. Same route as logout.
+  async function panic() {
+    showErr("");
+    const { dad_id, token } = getCreds();
+    if (!dad_id || !token) { showErr("Nothing to log out — no creds loaded."); return; }
+    const res = await fetch(BFF + "/vault/panic", {
+      method: "POST",
+      headers: { "content-type": "application/json", Authorization: "Bearer " + token },
+      body: JSON.stringify({ dad_id }),
+    });
+    $("dad_id").value = "";
+    $("token").value = "";
+    $("panel").hidden = true;
+    $("status").hidden = true;
+    if (!res.ok) {
+      showErr(res.status === 401 ? "That link was already dead. Ask Nick for a fresh one." : "HTTP " + res.status);
+      return;
+    }
+    showErr("Logged out everywhere. Every device is signed out. Ask Nick for a fresh link.");
   }
 
   // Boot: hash-only for token. Reject ?token= query (do not use it).
@@ -189,7 +238,12 @@
   }
 
   $("btn_load").addEventListener("click", () => loadState().catch((e) => showErr(String(e))));
-  $("btn_send").addEventListener("click", () => sendIntake().catch((e) => showErr(String(e))));
+  $("file").addEventListener("change", () => {
+    const f = $("file").files && $("file").files[0];
+    noteFile(f).catch((e) => showErr(String(e)));
+  });
+  $("btn_send").addEventListener("click", () => tellChip().catch((e) => showErr(String(e))));
+  $("btn_panic").addEventListener("click", () => panic().catch((e) => showErr(String(e))));
   $("btn_clear").addEventListener("click", () => {
     $("dad_id").value = "";
     $("token").value = "";
