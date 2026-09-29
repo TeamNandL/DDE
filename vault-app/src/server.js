@@ -77,6 +77,7 @@ export const PHASE1_ROUTES = [
   "GET /vault/search",
   "POST /vault/logout",
   "POST /vault/panic",
+  "POST /vault/evidence/log",
 ];
 
 function json(res, status, body) {
@@ -451,6 +452,25 @@ export async function handleBffRequest(bff, req, url, body) {
     await gateDad(bff, req, dad_id);
     log("http.legal.handoff", { dad: dad_id });
     return { status: 200, body: await bff.postLegalHandoff({ dad_id, id: body.id }) };
+  }
+
+  // Evidence capture skeleton (Slice 23): hash-log → inbox_unmapped. Not
+  // intake: /vault/intake stays Quill vent only. Log hygiene: ids only —
+  // never the filename, never the hash.
+  if (method === "POST" && path === "/vault/evidence/log") {
+    const dad_id = requireDadId(body.dad_id);
+    await gateDad(bff, req, dad_id);
+    log("http.evidence.log", { dad: dad_id });
+    return {
+      status: 200,
+      body: await bff.postEvidenceLog({
+        dad_id,
+        sha256: body.sha256,
+        filename: body.filename,
+        mime: body.mime,
+        needs_ocr: body.needs_ocr,
+      }),
+    };
   }
 
   // Involvement Cheat Sheet (Slice 16). Log hygiene: ids only — never kid

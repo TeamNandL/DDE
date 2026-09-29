@@ -84,6 +84,7 @@ export class Vault {
     this.involvement_fields = []; // involvement cheat sheet (Slice 16)
     this.legal_intakes = []; // legal intake seat (Slice 17)
     this.legal_handoff_drafts = []; // draft ≠ send: sent_at always null
+    this.evidence = []; // evidence capture skeleton (Slice 23): hash-log → inbox_unmapped
   }
 
   insertEvent(dadId, row) {
@@ -631,6 +632,42 @@ export class Vault {
     return rec;
   }
 
+  // ---- evidence capture skeleton (vault/017_evidence.sql twin) --------------
+  // Hash-log only: no bytes, no storage_uri, no OCR text. stage / routing /
+  // confidence / claim_status are pinned exactly like the SQL CHECKs.
+
+  findEvidenceByHash(dadId, sha256) {
+    return this.evidence.find((r) => r.dad_id === dadId && r.sha256 === sha256) ?? null;
+  }
+
+  insertEvidence(dadId, c) {
+    if (this.findEvidenceByHash(dadId, c.sha256)) {
+      throw Object.assign(new Error("duplicate evidence hash"), { status: 409 });
+    }
+    const rec = {
+      id: randomUUID(),
+      dad_id: dadId,
+      created_at: new Date().toISOString(),
+      sha256: c.sha256,
+      filename: c.filename ?? null,
+      mime: c.mime ?? null,
+      kind_guess: c.kind_guess,
+      confidence: "low",
+      stage: "logged",
+      routing: "inbox_unmapped",
+      needs_ocr: c.needs_ocr === true,
+      claim_status: "claim",
+      schema_version: 1,
+    };
+    this.evidence.push(rec);
+    log("evidence.log", { table: "evidence", id: rec.id, dad: dadId, kind: rec.kind_guess });
+    return rec;
+  }
+
+  listEvidence(dadId) {
+    return this.evidence.filter((r) => r.dad_id === dadId).map((r) => ({ ...r }));
+  }
+
   // Read helpers used by spreadsheet views (same names as SqlVault).
   async listEvents(dadId) {
     return this.events
@@ -680,6 +717,7 @@ export class Vault {
       involvement_fields: pick(this.involvement_fields),
       legal_intakes: pick(this.legal_intakes),
       legal_handoff_drafts: pick(this.legal_handoff_drafts),
+      evidence: pick(this.evidence),
     };
   }
 
@@ -690,7 +728,7 @@ export class Vault {
       "events", "communications", "documents", "month_summary", "candidate_facts",
       "notifications", "plan_topics", "plan_drafts", "translations",
       "translator_calendar_candidates", "involvement_fields", "legal_intakes",
-      "legal_handoff_drafts",
+      "legal_handoff_drafts", "evidence",
     ]) {
       const before = this[t].length;
       this[t] = this[t].filter((r) => r.dad_id !== dadId);

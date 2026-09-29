@@ -47,6 +47,9 @@ const INVOLVEMENT_COLS = `dad_id, kid_key, field_key, position, value,
 const LEGAL_INTAKE_COLS = `id, dad_id, created_at, who, what_cold, urgency, flags, route, claim_status`;
 const HANDOFF_COLS = `id, intake_id, dad_id, version, body, created_at, sent_at`;
 
+const EVIDENCE_COLS = `id, dad_id, created_at, sha256, filename, mime, kind_guess, confidence, stage,
+  routing, needs_ocr, claim_status, schema_version`;
+
 const PLAN_TOPIC_COLS = `dad_id, topic_key, position, status, choice, detail, stance, depth,
   example_shown, updated_at`;
 
@@ -567,6 +570,38 @@ export class SqlVault {
     return rows?.[0] ?? null;
   }
 
+  // ---- evidence capture skeleton (vault/017_evidence.sql) -----------------
+  // Hash-log only. The SQL CHECKs pin stage / routing / confidence /
+  // claim_status / schema_version; the insert names none of them so the
+  // defaults (and only the defaults) can ever land.
+
+  async findEvidenceByHash(dadId, sha256) {
+    const rows = await this.exec(
+      `select ${EVIDENCE_COLS} from evidence where dad_id = ${lit(dadId)} and sha256 = ${lit(sha256)};`,
+    );
+    return rows?.[0] ?? null;
+  }
+
+  async insertEvidence(dadId, c) {
+    const id = randomUUID();
+    const rows = await this.exec(
+      `insert into evidence (id, dad_id, sha256, filename, mime, kind_guess, needs_ocr)
+       values (${lit(id)}, ${lit(dadId)}, ${lit(c.sha256)}, ${lit(c.filename ?? null)}, ${lit(c.mime ?? null)},
+               ${lit(c.kind_guess)}, ${c.needs_ocr === true ? "true" : "false"})
+       returning ${EVIDENCE_COLS};`,
+    );
+    log("evidence.log", { table: "evidence", id, dad: dadId, kind: c.kind_guess });
+    return rows?.[0] ?? null;
+  }
+
+  async listEvidence(dadId) {
+    return (
+      (await this.exec(
+        `select ${EVIDENCE_COLS} from evidence where dad_id = ${lit(dadId)} order by created_at, id;`,
+      )) ?? []
+    );
+  }
+
   async listEvents(dadId) {
     return (
       (await this.exec(
@@ -588,7 +623,7 @@ export class SqlVault {
     "events", "communications", "documents", "month_summary", "state",
     "candidate_facts", "notifications", "plan_topics", "plan_drafts",
     "translations", "translator_calendar_candidates", "involvement_fields",
-    "legal_intakes", "legal_handoff_drafts",
+    "legal_intakes", "legal_handoff_drafts", "evidence",
   ];
 
   async exportAll(dadId) {
@@ -603,6 +638,7 @@ export class SqlVault {
   async wipeDad(dadId) {
     const counts = {};
     const order = [
+      "evidence",
       "legal_handoff_drafts", "legal_intakes",
       "translator_calendar_candidates", "translations",
       "plan_drafts", "plan_topics", "involvement_fields",

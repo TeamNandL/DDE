@@ -37,6 +37,8 @@ export function routeCases(dad_id, ctx = {}) {
     ["POST", "/vault/legal/intake", { dad_id, who: "school", what: "Report card came home.", urgency: "this_month" }],
     ["GET", q("/vault/legal/intake")],
     ["POST", "/vault/legal/handoff", { dad_id }],
+    // Slice 23 — evidence capture skeleton (hash-log only; fixed fake hash).
+    ["POST", "/vault/evidence/log", { dad_id, sha256: "a".repeat(64), filename: "statement.pdf", mime: "application/pdf" }],
     ["POST", "/vault/checkins/ensure", { dad_id, date: "2026-09-27", tz_offset_minutes: -240 }],
     ["GET", q("/vault/notifications"), undefined, (d) => { ctx.notification_id = (d?.items ?? d)?.[0]?.id; }],
     ["POST", "/vault/notifications/mark", () => ({ dad_id, id: ctx.notification_id, status: "read" })],

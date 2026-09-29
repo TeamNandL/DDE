@@ -19,13 +19,14 @@ import { unzipStore } from "../src/zip.js";
 import { runAsDad } from "../src/scope.js";
 import { jsonReq } from "./auth-cases.js";
 
-// Same 14 tables vault/015_auth_rls.sql protects (kept local: importing the
+// Same 14 tables vault/015_auth_rls.sql protects + evidence (017) (kept local: importing the
 // Slice 18 test file would re-register its tests here).
 const DAD_TABLES = [
   "events", "communications", "documents", "state", "month_summary",
   "candidate_facts", "notifications", "plan_topics", "plan_drafts",
   "translations", "translator_calendar_candidates", "involvement_fields",
   "legal_intakes", "legal_handoff_drafts",
+  "evidence",
 ];
 
 const url = databaseUrl();

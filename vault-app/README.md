@@ -87,6 +87,7 @@ Schema lives next to the app, not inside it:
 - `vault/005_return.sql` — `state.last_next` / `state.last_next_at` (applied with 001)
 - `vault/006_progress.sql` — `state.this_week_done` / `state.this_week_total` (applied with 001)
 - `vault/007_cold_ask.sql` — `state.last_next_kind` / `state.last_ask_summary` (applied with 001)
+- `vault/017_evidence.sql` — Slice 23 skeleton: ONE `evidence` table (client hash-log → `inbox_unmapped`, RLS on); `documents` untouched
 
 ## Tests
 

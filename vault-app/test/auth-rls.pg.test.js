@@ -29,6 +29,7 @@ export const DAD_TABLES = [
   "candidate_facts", "notifications", "plan_topics", "plan_drafts",
   "translations", "translator_calendar_candidates", "involvement_fields",
   "legal_intakes", "legal_handoff_drafts",
+  "evidence",
 ];
 
 async function open() {
@@ -189,7 +190,7 @@ test("PG auth matrix through RLS: every route 401 none/bad · 403 cross · 401 u
     const b = (await jsonReq(base, "POST", "/vault/provision", {})).data;
     const mint = async (id) => (await bff.mintToken({ dad_id: id })).token;
     const rows = await authMatrix(base, a, b, randomUUID(), mint);
-    assert.equal(rows.length, 43);
+    assert.equal(rows.length, 44);
     for (const r of rows) {
       assert.deepEqual(
         [r.none, r.bad, r.cross, r.unknown, r.own],

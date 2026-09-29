@@ -62,6 +62,7 @@ import {
 } from "./legalintake.js";
 import { DEFEAT_SAY, FAILSAFE_SAY, SAFETY_SAY, coach } from "./calmdraft.js";
 import { LAWYER_LINE as TRANSLATOR_LAWYER_LINE, explain as translatorExplain } from "./translator.js";
+import { checkEvidenceLog, classifyGuess, publicEvidence } from "./evidence.js";
 
 function unknownDad() {
   const err = new Error("unknown dad");
@@ -1445,6 +1446,41 @@ export function makeBff(vault, opts = {}) {
         q_len: (opts.q || "").length,
       });
       return result;
+    },
+
+    // ---- Evidence capture SKELETON (Slice 23) --------------------------------
+    // Client hash → log → classify-guess (low) → stage 'logged', routing
+    // 'inbox_unmapped'. Writes ONLY the evidence table: never an intake
+    // event (vent ≠ evidence), never documents, never a verified row. No
+    // bytes, no storage, no OCR worker (needs_ocr is a client flag only).
+    // Same hash twice for one dad → the existing row, duplicate: true, no
+    // second write. Logs: ids + kind only — never filename, never the hash.
+
+    // POST /vault/evidence/log {dad_id, sha256, filename?, mime?, needs_ocr?}
+    async postEvidenceLog({ dad_id, sha256, filename, mime, needs_ocr }) {
+      await requireDad(dad_id);
+      const c = checkEvidenceLog({ sha256, filename, mime, needs_ocr });
+      const existing = await vault.findEvidenceByHash(dad_id, c.sha256);
+      if (existing) {
+        log("evidence.duplicate", { dad: dad_id, id: existing.id });
+        return publicEvidence(existing, true);
+      }
+      const guess = classifyGuess(c);
+      let rec;
+      try {
+        rec = await vault.insertEvidence(dad_id, { ...c, kind_guess: guess.kind_guess });
+      } catch (err) {
+        // Two logs of the same file racing past the pre-check: the unique
+        // (dad_id, sha256) index wins, and the answer is still "already
+        // logged" — never a 500, never a second row.
+        const raced = err?.status === 409 || err?.code === "23505";
+        const again = raced ? await vault.findEvidenceByHash(dad_id, c.sha256) : null;
+        if (!again) throw err;
+        log("evidence.duplicate", { dad: dad_id, id: again.id });
+        return publicEvidence(again, true);
+      }
+      log("evidence.logged", { dad: dad_id, id: rec.id, kind: rec.kind_guess, needs_ocr: rec.needs_ocr });
+      return publicEvidence(rec, false);
     },
 
     // GET /vault/export/verified {dad_id} -> rows — Reporting ONLY (verified pipe).

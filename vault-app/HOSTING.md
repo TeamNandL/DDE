@@ -146,6 +146,17 @@ no row comes back.
 
 Then `npm run token:revoke -- --dad-id $D` to retire the fake dad's row.
 
+## Evidence capture skeleton (Slice 23)
+
+Boot applies `vault/017_evidence.sql` after 016: ONE dad-scoped table
+`evidence` (RLS on, same `dde_own_rows` policy as every dad table). It
+holds a client `sha256`, a PII-stripped filename/mime, a low-confidence
+`kind_guess`, and the pins `stage = 'logged'` / `routing = 'inbox_unmapped'`
+— every pin is a CHECK. No bytes, no `storage_uri`, no OCR worker; the
+`documents` table is not touched. Idempotent; no data migration. Rollback
+to 6fce1d2 needs nothing: the old code never reads `evidence`, and the
+table is harmless if left in place. Deploy is **not** in this slice's scope.
+
 ## Dad export + delete (Slice 21)
 
 Boot applies `vault/016_export_delete.sql` after 015: two **owner-only**
@@ -177,7 +188,7 @@ Soft delete: every token for the dad is revoked on the spot (his link dies:
 `token:reissue`). No new token can be minted for a dad inside the window.
 
 Hard wipe (`dad:purge`, run by Nick — cron it daily or run it by hand):
-deletes every row for the dad from all 14 dad tables (children before
+deletes every row for the dad from all 15 dad tables (children before
 parents) **and drops his token rows**, then writes `purged_at` +
 `purged_counts` on the ledger row. The dad no longer exists: any old token
 replayed gets `401 {"error":"unauthorized"}` — byte-identical to the soft
@@ -207,4 +218,4 @@ migrate down: the 016 tables are owner-only and af56bad never reads them.
 
 Proof: `DATABASE_URL=... node --test test/export-delete.test.js test/export-delete.pg.test.js`
 (PG leg asserts every row is still present during the soft window and that
-all 14 tables + token rows read zero after purge).
+all 15 tables + token rows read zero after purge).

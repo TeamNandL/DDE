@@ -460,6 +460,40 @@ does this paper mean?" → `route: process_translator` (§12); "what should I
 do?" stays here and becomes a question for the lawyer. No send path, no
 counsel channel. Not Coach, not Quill, not Parenting Plan (§11).
 
+### 15) Evidence capture — Slice 23 (SKELETON ONLY: hash-log → inbox_unmapped)
+
+**The client hashes the file. The vault logs the hash. Nothing else.** No
+upload, no bytes, no storage, no OCR, no mapping to a requirement.
+
+```
+POST /vault/evidence/log
+Authorization: Bearer <token>
+{ "dad_id": "<uuid>", "sha256": "<64 hex>", "filename"?: "…", "mime"?: "type/subtype", "needs_ocr"?: true|false }
+
+→ 200 { "id", "created_at", "sha256", "filename", "mime",
+        "kind_guess": "statement|tax_return|photo|screenshot|court|other",
+        "confidence": "low", "stage": "logged", "routing": "inbox_unmapped",
+        "needs_ocr": false, "schema_version": 1,
+        "claim": true, "verified": false, "duplicate": false,
+        "say": "Logged. It sits in your unsorted inbox — not filed, not proof yet. Next: keep the original file safe." }
+→ 200 duplicate: true   // same hash for this dad → the existing row, nothing new kept
+→ 400 bad sha256 / filename / mime / non-boolean needs_ocr · 401 / 403 as every dad route
+```
+
+Chip says `say` verbatim and stops. `kind_guess` is a filename/mime
+heuristic and is **always** `confidence: low` — a hint for a human, never
+a fact; it reuses the documents `doc_type` words (Figures owns evidence
+doctrine — no new taxonomy here). `stage`, `routing`, `confidence`,
+`claim_status` and `schema_version` are locked by database CHECKs.
+
+Rails: **vent ≠ evidence** — `POST /vault/intake` is untouched and never
+writes here; vent text never lands in `evidence`. The `documents` table is
+not extended. `needs_ocr` is a flag the client may set; there is **no OCR
+worker** and OCR is never truth. Exhibit (`verified_export`,
+`affidavit_support`) never sees these rows. Deferred, not on the wire:
+`storage_uri`, `bytes`, `evidence_requirement_link`, `page_range`.
+Evidence rows ride in the dad export under `claims/`, never `verified/`.
+
 ### Auth header
 
 `Authorization: Bearer <token>` (preferred) or `X-DDE-Token: <token>`.
