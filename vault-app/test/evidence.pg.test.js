@@ -104,12 +104,34 @@ test("PG evidence log: unique dad+hash, checks, RLS, no bytes, documents untouch
       /check/i,
     );
 
+    const dirtyHash = "12".repeat(32);
+    const dirty = await bff.postEvidenceLog({
+      dad_id: a,
+      sha256: dirtyHash,
+      filename: "C:\\scans\\w2-123-45-6789-call-904-555-1212.pdf",
+    });
+    assert.equal(dirty.created, true);
+    assert.equal(dirty.filename_guess, "w2-[tax-id]-call-[phone].pdf");
+    assert.equal(dirty.filename_confidence, "low");
+    assert.doesNotMatch(dirty.filename_guess, /123-45-6789|904-555-1212|[\\/]/);
+    const stored = await store.query(
+      `select filename_guess, filename_confidence from evidence_log where id = $1`,
+      [dirty.id],
+    );
+    assert.equal(stored.rows[0].filename_guess, "w2-[tax-id]-call-[phone].pdf");
+    assert.equal(stored.rows[0].filename_confidence, "low");
+
+    const absent = await bff.postEvidenceLog({ dad_id: a, sha256: "34".repeat(32) });
+    assert.equal(absent.filename_guess, null);
+    assert.equal(absent.filename_confidence, null);
+
     const verified = await store.query(
       `select source_table, row::text as row from verified_export where dad_id = $1`,
       [a],
     );
     assert.equal(verified.rows.length, 0, "after log, verified_export empty for those rows");
     assert.ok(!verified.rows.some((r) => String(r.row).includes(HASH) || r.source_table === "evidence_log"));
+    assert.ok(!verified.rows.some((r) => String(r.row).includes(dirtyHash) || String(r.row).includes("123-45-6789")));
     const viewdef = await store.query(`select pg_get_viewdef('verified_export'::regclass) as def`);
     assert.doesNotMatch(viewdef.rows[0].def, /evidence_log/);
 

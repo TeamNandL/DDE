@@ -81,6 +81,92 @@ test("filename guess is the basename at low confidence — never a document type
   assert.throws(() => prepareEvidenceLog({ sha256: HASH, possession: "vault" }), /possession must be held/);
 });
 
+test("filename guess strips PII from the basename; absent filename stays empty", async () => {
+  assert.deepEqual(filenameGuess(undefined), { filename_guess: null, filename_confidence: null });
+  assert.deepEqual(filenameGuess(""), { filename_guess: null, filename_confidence: null });
+  assert.deepEqual(filenameGuess("   "), { filename_guess: null, filename_confidence: null });
+
+  const ssn = filenameGuess("D:\\dad\\inbox\\w2-123-45-6789.pdf");
+  assert.equal(ssn.filename_guess, "w2-[tax-id].pdf");
+  assert.equal(ssn.filename_confidence, "low");
+  assert.doesNotMatch(ssn.filename_guess, /123-45-6789|[\\/]/);
+
+  const phone = filenameGuess("/tmp/inbox/voicemail-904-555-1212.m4a");
+  assert.equal(phone.filename_guess, "voicemail-[phone].m4a");
+  assert.equal(phone.filename_confidence, "low");
+  assert.doesNotMatch(phone.filename_guess, /904-555-1212|\//);
+
+  const email = filenameGuess("scans/dad.smith@example.com.png");
+  assert.equal(email.filename_guess, "[email]");
+  assert.equal(email.filename_confidence, "low");
+  assert.doesNotMatch(email.filename_guess, /@|dad\.smith/);
+
+  const clean = prepareEvidenceLog({ sha256: HASH, filename: "folder/IMG_2044.jpg" });
+  assert.equal(clean.filename_guess, "IMG_2044.jpg");
+  assert.equal(clean.filename_confidence, "low");
+
+  const s = await start();
+  try {
+    const a = await dad(s.base);
+    const logged = await jsonReq(
+      s.base,
+      "POST",
+      "/vault/evidence/log",
+      {
+        dad_id: a.dad_id,
+        sha256: HASH,
+        filename: "C:/Users/dad/Desktop/call-904.555.1212-ssn-123-45-6789.pdf",
+      },
+      { token: a.token },
+    );
+    assert.equal(logged.status, 200);
+    assert.equal(logged.data.filename_guess, "call-[phone]-ssn-[tax-id].pdf");
+    assert.equal(logged.data.filename_confidence, "low");
+    assert.doesNotMatch(logged.data.filename_guess, /904\.555\.1212|123-45-6789|[\\/]/);
+    assert.equal(s.vault.evidence_log.at(-1).filename_guess, logged.data.filename_guess);
+    assert.equal(s.vault.evidence_log.at(-1).filename_confidence, "low");
+
+    const again = await jsonReq(
+      s.base,
+      "POST",
+      "/vault/evidence/log",
+      { dad_id: a.dad_id, sha256: HASH, filename: "other-dad.smith@example.com.png" },
+      { token: a.token },
+    );
+    assert.equal(again.data.created, false);
+    assert.equal(again.data.filename_guess, "call-[phone]-ssn-[tax-id].pdf", "first stripped guess sticks");
+
+    const absent = await jsonReq(
+      s.base,
+      "POST",
+      "/vault/evidence/log",
+      { dad_id: a.dad_id, sha256: HASH_B },
+      { token: a.token },
+    );
+    assert.equal(absent.status, 200);
+    assert.equal(absent.data.filename_guess, null);
+    assert.equal(absent.data.filename_confidence, null);
+
+    const blank = await jsonReq(
+      s.base,
+      "POST",
+      "/vault/evidence/log",
+      { dad_id: a.dad_id, sha256: "ef".repeat(32), filename: "" },
+      { token: a.token },
+    );
+    assert.equal(blank.status, 200);
+    assert.equal(blank.data.filename_guess, null);
+    assert.equal(blank.data.filename_confidence, null);
+
+    const verified = await jsonReq(s.base, "GET", `/vault/export/verified?dad_id=${a.dad_id}`, null, { token: a.token });
+    assert.deepEqual(verified.data, []);
+    assert.equal(JSON.stringify(s.vault.evidence_log).includes("123-45-6789"), false);
+    assert.equal(JSON.stringify(s.vault.evidence_log).includes("904.555.1212"), false);
+  } finally {
+    await s.close();
+  }
+});
+
 test("POST /vault/evidence/log stores a hash only; duplicate dad+hash is the same row; inbox is unmapped", async () => {
   const s = await start();
   try {

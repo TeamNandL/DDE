@@ -1,7 +1,9 @@
 // Slice 23 — evidence skeleton.
 //
 // Hash-only log. A vent is not evidence. A filename is a low-confidence
-// guess (basename only), never a document type and never bytes.
+// guess (basename only, PII stripped), never a document type and never bytes.
+
+import { stripPii } from "./pii.js";
 
 const SHA256_RE = /^[0-9a-f]{64}$/;
 
@@ -31,8 +33,10 @@ export function normalizeSha256(value) {
 }
 
 /**
- * Basename only. Confidence is always "low" when a guess is kept —
- * the name is not the file, and this path never reads bytes.
+ * Basename only, then the vault PII strip (emails, SSN/EIN, phones, and
+ * the other shapes stripPii already redacts). Confidence is always "low"
+ * when a guess is kept — the name is not the file, and this path never
+ * reads bytes.
  * @returns {{ filename_guess: string|null, filename_confidence: "low"|null }}
  */
 export function filenameGuess(filename) {
@@ -44,8 +48,12 @@ export function filenameGuess(filename) {
   if (!base || base === "." || base === "..") {
     return { filename_guess: null, filename_confidence: null };
   }
-  if (base.length > 180) throw bad("filename must be at most 180 characters");
-  return { filename_guess: base, filename_confidence: "low" };
+  const stripped = stripPii(base).text.replaceAll("\0", "").trim();
+  if (!stripped || stripped === "." || stripped === "..") {
+    return { filename_guess: null, filename_confidence: null };
+  }
+  if (stripped.length > 180) throw bad("filename must be at most 180 characters");
+  return { filename_guess: stripped, filename_confidence: "low" };
 }
 
 /** Validate a log body. Returns the row fields the vault may store. */
