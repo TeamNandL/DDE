@@ -644,6 +644,8 @@ export class Vault {
       dad_id: dadId,
       created_at: new Date().toISOString(),
       sha256: prep.sha256,
+      schema_version: 1,
+      possession: prep.possession ?? "held",
       stage: "logged",
       routing: "inbox_unmapped",
       filename_guess: prep.filename_guess ?? null,

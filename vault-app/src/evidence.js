@@ -5,6 +5,12 @@
 
 const SHA256_RE = /^[0-9a-f]{64}$/;
 
+// Row shape pin. Every create writes this; the column CHECK refuses anything else.
+export const SCHEMA_VERSION = 1;
+
+// Where the original file is. The vault never holds the bytes.
+export const POSSESSIONS = ["held", "not located", "user says none"];
+
 // Shape of a vent / intake payload. Presence is enough — the log refuses it.
 const VENT_KEYS = ["text", "vent", "story", "raw_quote", "body", "body_cold", "notes"];
 
@@ -67,8 +73,24 @@ export function prepareEvidenceLog(body) {
   if (body.sha256 != null && body.hash != null && String(body.sha256).trim().toLowerCase() !== String(body.hash).trim().toLowerCase()) {
     throw bad("sha256 and hash must match");
   }
+  if (
+    Object.prototype.hasOwnProperty.call(body, "schema_version") &&
+    body.schema_version != null &&
+    Number(body.schema_version) !== SCHEMA_VERSION
+  ) {
+    throw bad("schema_version must be 1");
+  }
+  let possession = "held";
+  if (body.possession != null && body.possession !== "") {
+    if (typeof body.possession !== "string" || !POSSESSIONS.includes(body.possession)) {
+      throw bad("possession must be held, not located, or user says none");
+    }
+    possession = body.possession;
+  }
   return {
     sha256: normalizeSha256(body.sha256 ?? body.hash),
+    schema_version: SCHEMA_VERSION,
+    possession,
     stage: "logged",
     routing: "inbox_unmapped",
     ...filenameGuess(body.filename),
@@ -84,6 +106,8 @@ export function publicEvidence(row, extra = {}) {
     routing: row.routing,
     filename_guess: row.filename_guess ?? null,
     filename_confidence: row.filename_confidence ?? null,
+    schema_version: Number(row.schema_version),
+    possession: row.possession,
     created_at,
     ...extra,
   };

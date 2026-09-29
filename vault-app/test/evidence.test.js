@@ -41,6 +41,10 @@ async function dad(base) {
 test("017_evidence.sql: hash log, unique dad+hash, RLS, no bytes, documents untouched", () => {
   assert.match(SQL, /create table if not exists evidence_log/);
   assert.match(SQL, /unique \(dad_id, sha256\)/);
+  assert.match(SQL, /schema_version\s+int not null default 1/);
+  assert.match(SQL, /check \(schema_version = 1\)/);
+  assert.match(SQL, /possession\s+text not null default 'held'/);
+  assert.match(SQL, /'held', 'not located', 'user says none'/);
   assert.match(SQL, /stage = 'logged'/);
   assert.match(SQL, /routing = 'inbox_unmapped'/);
   assert.match(SQL, /filename_confidence = 'low'/);
@@ -65,8 +69,13 @@ test("filename guess is the basename at low confidence — never a document type
     filename_guess: "note.pdf",
     filename_confidence: "low",
   });
-  assert.equal(prepareEvidenceLog({ sha256: HASH, filename: "IMG_2044.jpg" }).filename_confidence, "low");
+  const prepared = prepareEvidenceLog({ sha256: HASH, filename: "IMG_2044.jpg" });
+  assert.equal(prepared.filename_confidence, "low");
+  assert.equal(prepared.schema_version, 1, "schema_version is set on create");
+  assert.equal(prepared.possession, "held");
   assert.throws(() => prepareEvidenceLog({ sha256: HASH, filename_confidence: "high" }), /filename confidence stays low/);
+  assert.throws(() => prepareEvidenceLog({ sha256: HASH, schema_version: 2 }), /schema_version must be 1/);
+  assert.throws(() => prepareEvidenceLog({ sha256: HASH, possession: "vault" }), /possession must be held/);
 });
 
 test("POST /vault/evidence/log stores a hash only; duplicate dad+hash is the same row; inbox is unmapped", async () => {
@@ -91,6 +100,9 @@ test("POST /vault/evidence/log stores a hash only; duplicate dad+hash is the sam
     assert.equal(logged.data.sha256, HASH);
     assert.equal(logged.data.filename_guess, "IMG_2044.jpg");
     assert.equal(logged.data.filename_confidence, "low");
+    assert.equal(logged.data.schema_version, 1, "schema_version set on create");
+    assert.equal(logged.data.possession, "held");
+    assert.equal(s.vault.evidence_log.at(-1).schema_version, 1);
     assert.equal(s.vault.documents.length, docsBefore, "documents unchanged");
     assert.equal(s.vault.events.length, eventsBefore, "not a vent / event");
     assert.equal(Object.hasOwn(logged.data, "bytes"), false);
@@ -99,13 +111,14 @@ test("POST /vault/evidence/log stores a hash only; duplicate dad+hash is the sam
       s.base,
       "POST",
       "/vault/evidence/log",
-      { dad_id: a.dad_id, hash: HASH, filename: "other-name.pdf" },
+      { dad_id: a.dad_id, hash: HASH, filename: "other-name.pdf", possession: "not located" },
       { token: a.token },
     );
     assert.equal(again.status, 200);
     assert.equal(again.data.created, false);
     assert.equal(again.data.id, logged.data.id);
     assert.equal(again.data.filename_guess, "IMG_2044.jpg", "first guess sticks");
+    assert.equal(again.data.possession, "held", "first possession sticks");
     assert.equal(s.vault.evidence_log.filter((r) => r.dad_id === a.dad_id).length, 1);
 
     const otherDad = await jsonReq(
@@ -143,6 +156,39 @@ test("POST /vault/evidence/log stores a hash only; duplicate dad+hash is the sam
 
     const cross = await jsonReq(s.base, "GET", `/vault/evidence/inbox?dad_id=${b.dad_id}`, null, { token: a.token });
     assert.equal(cross.status, 403);
+  } finally {
+    await s.close();
+  }
+});
+
+test("after log, verified_export empty for those rows", async () => {
+  const s = await start();
+  try {
+    const a = await dad(s.base);
+    const logged = await jsonReq(
+      s.base,
+      "POST",
+      "/vault/evidence/log",
+      { dad_id: a.dad_id, sha256: HASH, filename: "IMG_2044.jpg", possession: "held" },
+      { token: a.token },
+    );
+    assert.equal(logged.status, 200);
+    assert.equal(logged.data.schema_version, 1);
+    assert.equal(logged.data.stage, "logged");
+    assert.equal(logged.data.routing, "inbox_unmapped");
+
+    const inbox = await jsonReq(s.base, "GET", `/vault/evidence/inbox?dad_id=${a.dad_id}`, null, { token: a.token });
+    assert.equal(inbox.data.items.length, 1);
+    assert.equal(inbox.data.items[0].sha256, HASH);
+
+    const verified = await jsonReq(s.base, "GET", `/vault/export/verified?dad_id=${a.dad_id}`, null, { token: a.token });
+    assert.equal(verified.status, 200);
+    assert.deepEqual(verified.data, [], "verified_export empty for those rows");
+    assert.equal(JSON.stringify(verified.data).includes(HASH), false);
+    assert.ok(
+      !s.vault.verifiedExport(a.dad_id).some((r) => r.sha256 === HASH || r.source_table === "evidence_log"),
+    );
+    assert.equal(s.vault.documents.length, 0);
   } finally {
     await s.close();
   }

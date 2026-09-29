@@ -17,7 +17,7 @@ const url = databaseUrl();
 const skip = !url && "DATABASE_URL not set — BLOCKED";
 const HASH = "ab".repeat(32);
 
-test("PG evidence log: unique dad+hash, checks, RLS, no bytes, documents untouched", { skip }, async () => {
+test("PG evidence log: unique dad+hash, checks, RLS, no bytes, documents untouched; after log, verified_export empty for those rows", { skip }, async () => {
   const store = await openStore({ databaseUrl: url });
   assert.equal(store.kind, "postgres");
   try {
@@ -34,6 +34,8 @@ test("PG evidence log: unique dad+hash, checks, RLS, no bytes, documents untouch
     );
     const byName = Object.fromEntries(cols.rows.map((r) => [r.column_name, r.data_type]));
     assert.equal(byName.sha256, "text");
+    assert.equal(byName.schema_version, "integer");
+    assert.equal(byName.possession, "text");
     assert.equal(byName.bytes, undefined);
     assert.ok(!Object.values(byName).includes("bytea"), "no bytea column");
 
@@ -53,6 +55,8 @@ test("PG evidence log: unique dad+hash, checks, RLS, no bytes, documents untouch
     assert.equal(first.routing, "inbox_unmapped");
     assert.equal(first.filename_guess, "IMG_2044.jpg");
     assert.equal(first.filename_confidence, "low");
+    assert.equal(first.schema_version, 1, "schema_version set on create");
+    assert.equal(first.possession, "held");
 
     const dup = await bff.postEvidenceLog({ dad_id: a, hash: HASH, filename: "renamed.pdf" });
     assert.equal(dup.created, false);
@@ -91,6 +95,23 @@ test("PG evidence log: unique dad+hash, checks, RLS, no bytes, documents untouch
       store.query(`update evidence_log set filename_confidence = 'high' where id = $1`, [first.id]),
       /check/i,
     );
+    await assert.rejects(
+      store.query(`update evidence_log set schema_version = 2 where id = $1`, [first.id]),
+      /check/i,
+    );
+    await assert.rejects(
+      store.query(`update evidence_log set possession = 'vault' where id = $1`, [first.id]),
+      /check/i,
+    );
+
+    const verified = await store.query(
+      `select source_table, row::text as row from verified_export where dad_id = $1`,
+      [a],
+    );
+    assert.equal(verified.rows.length, 0, "after log, verified_export empty for those rows");
+    assert.ok(!verified.rows.some((r) => String(r.row).includes(HASH) || r.source_table === "evidence_log"));
+    const viewdef = await store.query(`select pg_get_viewdef('verified_export'::regclass) as def`);
+    assert.doesNotMatch(viewdef.rows[0].def, /evidence_log/);
 
     await runAsDad(a, async () => {
       const mine = await store.vault.listEvidenceInbox(b);

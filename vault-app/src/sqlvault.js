@@ -45,7 +45,7 @@ const INVOLVEMENT_COLS = `dad_id, kid_key, field_key, position, value,
   to_char(asked_on, 'YYYY-MM-DD') as asked_on, asked_via, outcome, source, claim_status, updated_at`;
 
 const LEGAL_INTAKE_COLS = `id, dad_id, created_at, who, what_cold, urgency, flags, route, claim_status`;
-const EVIDENCE_COLS = `id, dad_id, sha256, stage, routing, filename_guess, filename_confidence, created_at`;
+const EVIDENCE_COLS = `id, dad_id, sha256, schema_version, possession, stage, routing, filename_guess, filename_confidence, created_at`;
 const HANDOFF_COLS = `id, intake_id, dad_id, version, body, created_at, sent_at`;
 
 const PLAN_TOPIC_COLS = `dad_id, topic_key, position, status, choice, detail, stance, depth,
@@ -574,8 +574,8 @@ export class SqlVault {
   async logEvidence(dadId, prep) {
     const id = randomUUID();
     const rows = await this.exec(
-      `insert into evidence_log (id, dad_id, sha256, stage, routing, filename_guess, filename_confidence)
-       values (${lit(id)}, ${lit(dadId)}, ${lit(prep.sha256)}, 'logged', 'inbox_unmapped',
+      `insert into evidence_log (id, dad_id, sha256, schema_version, possession, stage, routing, filename_guess, filename_confidence)
+       values (${lit(id)}, ${lit(dadId)}, ${lit(prep.sha256)}, 1, ${lit(prep.possession ?? "held")}, 'logged', 'inbox_unmapped',
                ${lit(prep.filename_guess ?? null)}, ${lit(prep.filename_confidence ?? null)})
        on conflict (dad_id, sha256) do nothing
        returning ${EVIDENCE_COLS};`,
