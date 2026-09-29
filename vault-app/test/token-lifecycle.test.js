@@ -315,8 +315,10 @@ test("durable JSON: logout + expiry survive restart as revoked_at; cutover backf
     assert.ok(disk.tokens.every((t) => t.last_seen_at), "backfilled");
     assert.equal(disk.tokens.filter((t) => t.dad_id === a.dad_id && t.revoked_at).length, 2, "both revoked_at set");
 
-    // Restart: still dead. Then the legacy token idles 30 days → expired → revoked_at.
-    const s2 = await start({ now: T0 + 31 * DAY, vault, tokenStore: await openTokenStore({ jsonPath }) });
+    // Restart: still dead. Then the legacy token idles 30 days from the
+    // cutover backfill (wall clock, not T0) → expired → revoked_at.
+    const seen = Date.parse(disk.tokens.find((t) => t.dad_id === legacyDad).last_seen_at);
+    const s2 = await start({ now: seen + 31 * DAY, vault, tokenStore: await openTokenStore({ jsonPath }) });
     try {
       assert.equal((await state(s2.base, a.dad_id, a.token)).status, 401, "logout survives restart");
       const r = await state(s2.base, legacyDad, "legacy-old");
