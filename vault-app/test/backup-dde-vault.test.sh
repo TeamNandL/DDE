@@ -114,6 +114,13 @@ grep -F -q "region: us-east-1" "$out" \
   || fail "plan missing region us-east-1"
 grep -F -q "sse: AES256" "$out" \
   || fail "plan missing SSE AES256"
+grep -F -q "openssl enc -aes-256-cbc -pbkdf2 -salt" "$out" \
+  || fail "plan missing aes-256-cbc"
+grep -F -q "openssl dgst -sha256 -hmac" "$out" \
+  || fail "plan missing HMAC-SHA256"
+if grep -F -q "aes-256-gcm" "$out" "$err"; then
+  fail "plan still names aes-256-gcm"
+fi
 if grep -F -q "$passphrase" "$out" "$err"; then
   fail "dry-run printed BACKUP_PASSPHRASE"
 fi

@@ -1,12 +1,8 @@
 #!/usr/bin/env bash
-# Round-trip a tiny fake dump with openssl enc -aes-256-gcm.
+# Round-trip a tiny fake dump with openssl enc -aes-256-cbc and HMAC-SHA256.
 # The passphrase exists only in this test process. Does not call pg_dump
 # or the AWS CLI, does not read DATABASE_URL, and does not open a network
-# connection. Temp files are removed before exit.
-#
-# openssl enc rejects AEAD ciphers, including aes-256-gcm. That check is
-# present in OpenSSL 3.0.13 and 3.5.4, and the same rejection is still in
-# the 3.6.5 and 4.0.3 sources. The command is the one the backup script uses.
+# connection. Plaintext and temp files are removed on failure.
 
 set -euo pipefail
 umask 077
@@ -47,15 +43,28 @@ fail() {
   exit 1
 }
 
-work="$(mktemp -d "${TMPDIR:-/tmp}/dde-vault-gcm-test.XXXXXXXX")"
+here="$(cd "$(dirname "$0")" && pwd)"
+script="${here}/../../scripts/backup-dde-vault.sh"
+if [[ ! -f "$script" ]]; then
+  fail "backup script not found at ${script}"
+fi
+
+unset DATABASE_URL || true
+
+work="$(mktemp -d "${TMPDIR:-/tmp}/dde-vault-roundtrip.XXXXXXXX")"
 marker="${work}/forbidden"
 plain="${work}/fake.dump"
 cipher="${work}/fake.dump.enc"
+hmac_file="${work}/fake.dump.enc.hmac"
 restored="${work}/fake.dump.restored"
-openssl_err="${work}/openssl.err"
+bad_hmac="${work}/bad.hmac"
+bad_plain="${work}/bad.restored"
 : >"$marker"
 
 cleanup() {
+  if [[ -n "${plain:-}" && -f "${plain}" ]]; then
+    rm -f -- "${plain}"
+  fi
   if [[ -n "${work:-}" && -d "${work}" ]]; then
     rm -rf -- "${work}"
   fi
@@ -72,8 +81,7 @@ EOF
 done
 
 base_path="${PATH:-/usr/bin:/bin}"
-safe_path="${work}:${base_path}"
-export PATH="$safe_path"
+export PATH="${work}:${base_path}"
 hash -r
 
 for cmd in pg_dump aws; do
@@ -88,64 +96,56 @@ if [[ -z "$openssl_bin" || "$openssl_bin" == "${work}/openssl" ]]; then
   fail "real openssl is not on PATH"
 fi
 
-# Passphrase stays in this process and is handed to openssl through the
-# environment. It is not written to a file.
-passphrase="local-gcm-roundtrip-only"
+# Passphrase stays in this process. It is not written to a file.
+export BACKUP_PASSPHRASE="local-cbc-roundtrip-only"
 
-# Tiny fake dump. Not a pg_dump, not a database.
+# shellcheck disable=SC1090
+source "$script"
+
 printf 'DDE fake vault dump\n\0\001\002not-a-database\n' >"$plain"
 
-show_openssl_err() {
-  if [[ -s "$openssl_err" ]] && ! grep -F -q -e "$passphrase" "$openssl_err"; then
-    cat "$openssl_err" >&2
-  fi
-}
-
-# Same cipher flags as scripts/backup-dde-vault.sh.
-if ! env \
-    -u DATABASE_URL \
-    -u AWS_ACCESS_KEY_ID \
-    -u AWS_SECRET_ACCESS_KEY \
-    -u AWS_SESSION_TOKEN \
-    -u AWS_PROFILE \
-    BACKUP_PASSPHRASE="$passphrase" \
-    openssl enc -aes-256-gcm -pbkdf2 -salt \
-      -pass env:BACKUP_PASSPHRASE \
-      -in "$plain" \
-      -out "$cipher" \
-      2>"$openssl_err"; then
-  show_openssl_err
-  if grep -F -q "AEAD ciphers not supported" "$openssl_err"; then
-    fail "openssl enc does not support aes-256-gcm (AEAD ciphers not supported)"
-  fi
-  fail "openssl enc -aes-256-gcm failed"
+if ! encrypt_dump "$plain" "$cipher"; then
+  rm -f -- "$plain"
+  fail "openssl enc -aes-256-cbc failed"
 fi
-
 if [[ ! -s "$cipher" ]]; then
+  rm -f -- "$plain"
   fail "encryption produced an empty file"
 fi
 if cmp -s "$plain" "$cipher"; then
+  rm -f -- "$plain"
   fail "ciphertext is identical to the fake dump"
 fi
 
-if ! env \
-    -u DATABASE_URL \
-    -u AWS_ACCESS_KEY_ID \
-    -u AWS_SECRET_ACCESS_KEY \
-    -u AWS_SESSION_TOKEN \
-    -u AWS_PROFILE \
-    BACKUP_PASSPHRASE="$passphrase" \
-    openssl enc -d -aes-256-gcm -pbkdf2 \
-      -pass env:BACKUP_PASSPHRASE \
-      -in "$cipher" \
-      -out "$restored" \
-      2>"$openssl_err"; then
-  show_openssl_err
-  fail "openssl enc -d -aes-256-gcm failed"
+if ! write_hmac "$cipher" "$hmac_file"; then
+  rm -f -- "$plain" "$cipher"
+  fail "HMAC computation failed"
+fi
+
+if ! hmac_matches "$cipher" "$hmac_file"; then
+  rm -f -- "$plain" "$restored"
+  fail "HMAC did not verify"
+fi
+
+if ! restore_dump "$cipher" "$hmac_file" "$restored"; then
+  rm -f -- "$plain" "$restored"
+  fail "restore failed after a matching HMAC"
 fi
 
 if ! cmp -s "$plain" "$restored"; then
+  rm -f -- "$plain" "$restored"
   fail "decrypted bytes do not match the fake dump"
+fi
+
+# A wrong HMAC must not decrypt.
+printf '%s\n' '0000000000000000000000000000000000000000000000000000000000000000' >"$bad_hmac"
+if restore_dump "$cipher" "$bad_hmac" "$bad_plain"; then
+  rm -f -- "$plain" "$bad_plain" "$restored"
+  fail "bad HMAC was accepted"
+fi
+if [[ -e "$bad_plain" ]]; then
+  rm -f -- "$plain" "$bad_plain" "$restored"
+  fail "plaintext exists after HMAC verification failed"
 fi
 
 if [[ -s "$marker" ]]; then
@@ -154,8 +154,8 @@ if [[ -s "$marker" ]]; then
   exit 1
 fi
 
-rm -f -- "$plain" "$cipher" "$restored" "$openssl_err" "$marker"
-if [[ -e "$plain" || -e "$cipher" || -e "$restored" ]]; then
+rm -f -- "$plain" "$cipher" "$hmac_file" "$restored" "$bad_hmac" "$bad_plain" "$marker"
+if [[ -e "$plain" || -e "$cipher" || -e "$restored" || -e "$bad_plain" ]]; then
   fail "temp dump files are still on disk"
 fi
 rm -rf -- "$work"
@@ -164,4 +164,4 @@ if [[ -d "$work" ]]; then
 fi
 trap - EXIT
 
-echo "ok aes-256-gcm roundtrip ($(openssl version))"
+echo "ok aes-256-cbc hmac roundtrip ($(openssl version))"
