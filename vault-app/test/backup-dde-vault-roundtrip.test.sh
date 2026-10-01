@@ -139,9 +139,13 @@ fi
 
 # A wrong HMAC must not decrypt.
 printf '%s\n' '0000000000000000000000000000000000000000000000000000000000000000' >"$bad_hmac"
-if restore_dump "$cipher" "$bad_hmac" "$bad_plain"; then
+if restore_dump "$cipher" "$bad_hmac" "$bad_plain" 2>"${work}/bad.err"; then
   rm -f -- "$plain" "$bad_plain" "$restored"
   fail "bad HMAC was accepted"
+fi
+if ! grep -F -q "HMAC verification failed" "${work}/bad.err"; then
+  rm -f -- "$plain" "$bad_plain" "$restored"
+  fail "bad HMAC did not report a verification failure"
 fi
 if [[ -e "$bad_plain" ]]; then
   rm -f -- "$plain" "$bad_plain" "$restored"
