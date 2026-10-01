@@ -3,6 +3,9 @@
 # The passphrase exists only in this test process. Does not call pg_dump
 # or the AWS CLI, does not read DATABASE_URL, and does not open a network
 # connection. Temp files are removed before exit.
+#
+# openssl enc accepts aes-256-gcm on OpenSSL 3.2 and newer. OpenSSL 3.0
+# exits with "AEAD ciphers not supported".
 
 set -euo pipefail
 umask 077
@@ -111,6 +114,9 @@ if ! env \
       -out "$cipher" \
       2>"$openssl_err"; then
   show_openssl_err
+  if grep -F -q "AEAD ciphers not supported" "$openssl_err"; then
+    fail "this openssl enc does not support aes-256-gcm (need OpenSSL 3.2 or newer)"
+  fi
   fail "openssl enc -aes-256-gcm failed"
 fi
 
